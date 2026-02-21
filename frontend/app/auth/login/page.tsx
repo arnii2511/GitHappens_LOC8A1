@@ -35,7 +35,6 @@ export default function LoginPage() {
         return
       }
 
-      // Check if onboarding is complete
       const { data: { user } } = await supabase.auth.getUser()
       if (user) {
         const { data: profile } = await supabase
