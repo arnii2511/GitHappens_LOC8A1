@@ -5,6 +5,8 @@ from typing import Dict, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from ..industry_map import canonicalize, industry_similarity
+from ..pipeline.dynamic_weights import get_dynamic_weights
 from ..pipeline.helpers import capacity_fit, safe_float
 from ..pipeline.risk import news_risk_penalty
 from .common import as_float_series, as_text
@@ -90,9 +92,8 @@ class PairFeatureBuilder:
         return out
 
     def candidate_features_for_buyer(self, buyer_row: pd.Series) -> Tuple[pd.DataFrame, Optional[str]]:
-        industry = as_text(buyer_row.get("Industry", "")).lower()
-        cands = self.exporters_by_industry.get(industry)
-        if cands is None or cands.empty:
+        industry = canonicalize(as_text(buyer_row.get("Industry", "")))
+        if industry == "unknown":
             return pd.DataFrame(), None
 
         buyer_id = as_text(buyer_row.get("Buyer_ID"))
@@ -102,13 +103,23 @@ class PairFeatureBuilder:
         ref_date = buyer_row.get("Date", pd.NaT)
         comm_score, comm_warn = self._comm_score(buyer_row.get("Preferred_Channel", ""))
         news_penalty, risk_warn, shock = self._cached_news_penalty(industry, ref_date)
+        w_match = get_dynamic_weights(buyer_row, news_penalty)
 
-        exporters = cands.reset_index(drop=True)
+        exporters = self.exporters.reset_index(drop=True).copy()
+        if "Industry" in exporters.columns:
+            exporters["industry_sim"] = exporters["Industry"].apply(lambda x: industry_similarity(industry, x))
+        else:
+            exporters["industry_sim"] = 0.0
+        exporters = exporters[exporters["industry_sim"] >= 0.5].reset_index(drop=True)
+        if exporters.empty:
+            return pd.DataFrame(), None
+
         exporter_qty = as_float_series(exporters, "Quantity_Tons", np.nan)
         exporter_trust = as_float_series(exporters, "exporter_trust", 0.0)
         exporter_intent = as_float_series(exporters, "exporter_intent", 0.0)
         exporter_state = exporters["State"].astype(str).to_numpy() if "State" in exporters.columns else np.array([""] * len(exporters))
         exporter_cert = exporters["Certification"].astype(str).to_numpy() if "Certification" in exporters.columns else np.array([""] * len(exporters))
+        industry_sim = as_float_series(exporters, "industry_sim", 0.0)
 
         cap_fit = self._vector_capacity_fit(exporter_qty, buyer_avg)
         intent_fit = (buyer_intent / 100.0) * (exporter_intent / 100.0) * 100.0
@@ -124,7 +135,12 @@ class PairFeatureBuilder:
         ex_risk_penalty = np.minimum(20.0, 20.0 * ex_risk)
         total_penalty = np.minimum(30.0, news_penalty + ex_risk_penalty)
 
-        base_match = 0.45 * cap_fit + 0.30 * intent_fit + 0.25 * comm_score
+        non_industry_match = (
+            w_match["cap_fit"] * cap_fit
+            + w_match["intent"] * intent_fit
+            + w_match["comm"] * comm_score
+        )
+        base_match = 0.80 * non_industry_match + 0.20 * (industry_sim * 100.0)
         match_after_risk = np.clip(base_match - total_penalty, 0.0, 100.0)
 
         warning = risk_warn or comm_warn
@@ -135,7 +151,8 @@ class PairFeatureBuilder:
                 "exporter_state": exporter_state,
                 "exporter_cert": exporter_cert,
                 "industry": industry,
-                "industry_match": np.ones(len(exporters), dtype=np.float64),
+                "industry_match": industry_sim,
+                "industry_similarity": industry_sim,
                 "cap_fit": cap_fit,
                 "intent_fit": intent_fit,
                 "pair_trust": pair_trust,
@@ -150,6 +167,9 @@ class PairFeatureBuilder:
                 "match_after_risk": match_after_risk,
                 "buyer_trust": np.full(len(exporters), buyer_trust, dtype=np.float64),
                 "exporter_trust": exporter_trust,
+                "w_cap_fit": np.full(len(exporters), w_match["cap_fit"], dtype=np.float64),
+                "w_intent": np.full(len(exporters), w_match["intent"], dtype=np.float64),
+                "w_comm": np.full(len(exporters), w_match["comm"], dtype=np.float64),
             }
         )
         return out, warning
@@ -161,9 +181,9 @@ class PairFeatureBuilder:
         buyer = self.buyers_idx.loc[buyer_id]
         exporter = self.exporters_idx.loc[exporter_id]
 
-        buyer_industry = as_text(buyer.get("Industry", "")).lower()
-        exporter_industry = as_text(exporter.get("Industry", "")).lower()
-        industry_match = 1.0 if buyer_industry == exporter_industry and buyer_industry else 0.0
+        buyer_industry = canonicalize(as_text(buyer.get("Industry", "")))
+        exporter_industry = canonicalize(as_text(exporter.get("Industry", "")))
+        industry_match = industry_similarity(buyer_industry, exporter_industry)
 
         buyer_trust = safe_float(buyer.get("buyer_trust", 0.0), 0.0)
         buyer_intent = safe_float(buyer.get("buyer_intent", 0.0), 0.0)
@@ -176,6 +196,7 @@ class PairFeatureBuilder:
         comm_score, _ = self._comm_score(buyer.get("Preferred_Channel", ""))
 
         n_penalty, _, shock = self._cached_news_penalty(buyer_industry, buyer.get("Date", pd.NaT))
+        w_match = get_dynamic_weights(buyer, n_penalty)
         ex_risk = (
             0.30 * abs(safe_float(exporter.get("Tariff_Impact", 0), 0))
             + 0.25 * abs(safe_float(exporter.get("StockMarket_Impact", 0), 0))
@@ -185,12 +206,19 @@ class PairFeatureBuilder:
         )
         ex_penalty = float(min(20.0, 20.0 * ex_risk))
         total_penalty = float(min(30.0, n_penalty + ex_penalty))
-        match_after_risk = float(np.clip(0.45 * cap + 0.30 * intent_fit + 0.25 * comm_score - total_penalty, 0.0, 100.0))
+        non_industry_match = (
+            w_match["cap_fit"] * cap
+            + w_match["intent"] * intent_fit
+            + w_match["comm"] * comm_score
+        )
+        base_match = 0.80 * non_industry_match + 0.20 * (industry_match * 100.0)
+        match_after_risk = float(np.clip(base_match - total_penalty, 0.0, 100.0))
 
         return pd.DataFrame(
             [
                 {
                     "industry_match": industry_match,
+                    "industry_similarity": industry_match,
                     "cap_fit": cap,
                     "intent_fit": intent_fit,
                     "pair_trust": pair_trust,
@@ -205,6 +233,9 @@ class PairFeatureBuilder:
                     "match_after_risk": match_after_risk,
                     "buyer_trust": buyer_trust,
                     "exporter_trust": exporter_trust,
+                    "w_cap_fit": w_match["cap_fit"],
+                    "w_intent": w_match["intent"],
+                    "w_comm": w_match["comm"],
                 }
             ]
         )

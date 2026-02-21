@@ -30,6 +30,10 @@ dist/
 coverage/
 htmlcov/
 
+# Local model artifacts
+models/
+*.pkl
+
 # Next.js
 node_modules/
 .next/

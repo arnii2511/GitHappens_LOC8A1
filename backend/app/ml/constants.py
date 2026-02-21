@@ -1,5 +1,6 @@
 FEATURE_COLUMNS = [
     "industry_match",
+    "industry_similarity",
     "cap_fit",
     "intent_fit",
     "pair_trust",
@@ -14,4 +15,7 @@ FEATURE_COLUMNS = [
     "match_after_risk",
     "buyer_trust",
     "exporter_trust",
+    "w_cap_fit",
+    "w_intent",
+    "w_comm",
 ]
