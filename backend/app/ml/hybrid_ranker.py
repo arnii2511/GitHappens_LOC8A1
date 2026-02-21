@@ -138,7 +138,7 @@ class HybridRanker:
         cards = []
         for _, row in feature_df.iterrows():
             reasons = [
-                f"Industry match: {row['industry']}",
+                f"Industry fit: {round(safe_float(row.get('industry_similarity', row.get('industry_match', 0.0)), 0.0) * 100.0, 1)}",
                 f"Learned intent fit: {round(safe_float(row['intent_fit'], 0.0), 1)}",
                 f"Capacity fit: {round(safe_float(row['cap_fit'], 0.0), 1)}",
                 f"Trust pairing: {round(safe_float(row['pair_trust'], 0.0), 1)}",
@@ -158,10 +158,18 @@ class HybridRanker:
                 "news_risk_penalty": round(safe_float(row["news_risk_penalty"], 0.0), 2),
                 "exporter_risk_penalty": round(safe_float(row["exporter_risk_penalty"], 0.0), 2),
                 "shock_score": round(safe_float(row["shock_score"], 0.0), 4),
+                "industry_similarity": round(
+                    safe_float(row.get("industry_similarity", row.get("industry_match", 0.0)), 0.0) * 100.0, 2
+                ),
                 "ml_score": round(safe_float(row["ml_score"], 0.0), 2),
                 "collab_score": round(safe_float(row["collab_score"], 0.0), 2),
                 "ltr_score": round(safe_float(row["ltr_score"], 0.0), 2),
                 "adaptive_collab_weight": round(safe_float(row["adaptive_collab_weight"], 0.0), 2),
+                "dynamic_match_weights": {
+                    "cap_fit": round(safe_float(row.get("w_cap_fit", 0.0), 0.0), 4),
+                    "intent": round(safe_float(row.get("w_intent", 0.0), 0.0), 4),
+                    "comm": round(safe_float(row.get("w_comm", 0.0), 0.0), 4),
+                },
                 "confidence": round(safe_float(row["confidence"], 0.0), 2),
                 "is_exploration": bool(row.get("is_exploration", False)),
                 "final_rank": round(safe_float(row["final_rank"], 0.0), 2),

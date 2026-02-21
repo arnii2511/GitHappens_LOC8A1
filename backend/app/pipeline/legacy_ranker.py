@@ -1,7 +1,9 @@
 import numpy as np
 import pandas as pd
 
+from ..industry_map import canonicalize, industry_similarity
 from .checklist import verification_checklist
+from .dynamic_weights import get_dynamic_weights
 from .helpers import capacity_fit, safe_float
 from .risk import news_risk_penalty
 
@@ -12,16 +14,24 @@ def build_feed_for_buyer(
     news: pd.DataFrame,
     top_k: int = 10,
 ):
-    industry = str(buyer_row.get("Industry", "")).strip().lower()
+    raw_buyer_industry = str(buyer_row.get("Industry", "")).strip().lower()
+    buyer_industry = canonicalize(raw_buyer_industry)
     ref_date = buyer_row.get("Date", pd.NaT)
     buyer_avg = pd.to_numeric(buyer_row.get("Avg_Order_Tons", np.nan), errors="coerce")
 
-    cands = exporters_feat[exporters_feat["Industry"] == industry].copy()
+    cands = exporters_feat.copy()
+    if "Industry" in cands.columns:
+        inds = cands["Industry"]
+    else:
+        inds = pd.Series([""] * len(cands), index=cands.index)
+    cands["industry_sim"] = inds.apply(lambda x: industry_similarity(buyer_industry, x))
+    cands = cands[cands["industry_sim"] >= 0.5].copy()
     if cands.empty:
         return []
 
     cands["cap_fit"] = cands.get("Quantity_Tons", np.nan).apply(lambda q: capacity_fit(q, buyer_avg))
-    risk_penalty, risk_warn, shock = news_risk_penalty(news, industry, ref_date)
+    risk_penalty, risk_warn, shock = news_risk_penalty(news, buyer_industry, ref_date)
+    w_match = get_dynamic_weights(buyer_row, risk_penalty)
 
     preferred = str(buyer_row.get("Preferred_Channel", "")).strip().lower()
     if preferred in {"email", "linkedin"}:
@@ -41,12 +51,14 @@ def build_feed_for_buyer(
 
         intent_fit = (buyer_intent / 100.0) * (exporter_intent / 100.0) * 100.0
         pair_trust = 0.5 * buyer_trust + 0.5 * exporter_trust
+        ind_sim = safe_float(ex.get("industry_sim", 0.0), 0.0) * 100.0
 
-        match_score = (
-            0.45 * safe_float(ex.get("cap_fit", 60), 60) +
-            0.30 * intent_fit +
-            0.25 * comm_score
+        non_industry_match = (
+            w_match["cap_fit"] * safe_float(ex.get("cap_fit", 60), 60) +
+            w_match["intent"] * intent_fit +
+            w_match["comm"] * comm_score
         )
+        match_score = 0.80 * non_industry_match + 0.20 * ind_sim
 
         ex_risk = (
             0.30 * abs(safe_float(ex.get("Tariff_Impact", 0), 0)) +
@@ -67,7 +79,7 @@ def build_feed_for_buyer(
         ))
 
         reasons = [
-            f"Industry match: {industry}",
+            f"Industry fit: {round(ind_sim, 1)} ({buyer_industry} -> {canonicalize(ex.get('Industry', ''))})",
             f"Capacity fit: {round(safe_float(ex.get('cap_fit', 0)), 1)}",
             f"Trust: buyer {round(buyer_trust,1)} & exporter {round(exporter_trust,1)}",
             f"Intent: buyer {round(buyer_intent,1)} & exporter {round(exporter_intent,1)}",
@@ -85,6 +97,8 @@ def build_feed_for_buyer(
             "news_risk_penalty": round(risk_penalty, 2),
             "exporter_risk_penalty": round(ex_risk_penalty, 2),
             "shock_score": round(shock, 4),
+            "industry_similarity": round(ind_sim, 2),
+            "match_weights": {k: round(v, 4) for k, v in w_match.items()},
             "final_rank": round(final_rank, 2),
             "reasons": reasons,
             "warning": warning,

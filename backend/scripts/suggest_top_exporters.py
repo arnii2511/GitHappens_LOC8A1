@@ -63,6 +63,7 @@ def main():
         "ltr_score",
         "confidence",
         "is_exploration",
+        "industry_similarity",
         "match_score",
         "risk_penalty",
     ]

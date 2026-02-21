@@ -23,10 +23,16 @@ For setup/training/evaluation commands on a new machine, see `backend/QUICKSTART
 ### `app/pipeline/`
 - `data_loader.py`: loads cleaned CSV datasets.
 - `feature_engineering.py`: buyer/exporter feature computation.
+- `dynamic_weights.py`: adaptive match-weight policy (data quality + risk aware).
 - `risk.py`: news risk penalty model.
 - `checklist.py`: verification checklist generation.
 - `legacy_ranker.py`: old heuristic ranker (fallback/debug).
 - `helpers.py`: numeric/text helper utilities.
+
+### `app/industry_map.py`
+- Canonicalizes raw industry labels.
+- Provides buyer-exporter/news industry similarity scoring.
+- Enables related-industry matching (not only exact string matches).
 
 ### `app/ml/`
 - `feature_builder.py`: pairwise candidate feature construction.
@@ -51,8 +57,10 @@ For setup/training/evaluation commands on a new machine, see `backend/QUICKSTART
 - supervised learner from interactions (or bootstrap labels)
 - collaborative SVD embeddings from swipe matrix
 - learning-to-rank model for final ordering refinement
-4. Scores are blended with adaptive collaborative weight based on per-buyer interaction depth.
-5. Contextual exploration injects high-potential unseen exporters into top results occasionally.
-6. `/feed` builds candidate features, scores via hybrid model, returns ranked cards.
-7. `/swipe` persists action and updates model online.
-8. `/simulate/update` mutates news and refreshes ranker risk cache.
+4. Candidate generation uses industry canonicalization + related-industry similarity thresholding.
+5. Match scoring uses dynamic weights that adapt by missing buyer capacity data and macro-risk intensity.
+6. Scores are blended with adaptive collaborative weight based on per-buyer interaction depth.
+7. Contextual exploration injects high-potential unseen exporters into top results occasionally.
+8. `/feed` builds candidate features, scores via hybrid model, returns ranked cards.
+9. `/swipe` persists action and updates model online.
+10. `/simulate/update` mutates news and refreshes ranker risk cache.
