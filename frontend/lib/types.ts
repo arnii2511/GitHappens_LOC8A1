@@ -90,6 +90,11 @@ export interface MatchCardDTO {
   quantity: string;
   timeline: string;
   lastActive: string;
+
+  // Internal IDs for bridging Next.js routes to ML backend.
+  buyerId?: string;
+  exporterId?: string;
+  backendWarning?: string;
 }
 
 // Swipe record

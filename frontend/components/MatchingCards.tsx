@@ -20,8 +20,7 @@ import {
   Clock,
 } from 'lucide-react';
 import ScoreBreakdown from '@/components/ScoreBreakdown';
-import type { MatchCardDTO, SwipeAction, ConnectionRequest } from '@/lib/types';
-import { mockMatchCards } from '@/lib/mock-data';
+import type { MatchCardDTO, SwipeAction, ConnectionRequest, FeedResponse } from '@/lib/types';
 
 interface MatchingCardsProps {
   onConnect?: (connection: ConnectionRequest) => void;
@@ -99,10 +98,47 @@ function ReasonCard({ reason, index }: { reason: MatchCardDTO['reasons'][0]; ind
 
 // ─── Main MatchingCards Component ───
 export default function MatchingCards({ onConnect }: MatchingCardsProps = {}) {
-  const [feed] = useState<MatchCardDTO[]>(mockMatchCards);
+  const [feed, setFeed] = useState<MatchCardDTO[]>([]);
   const [swipedIds, setSwipedIds] = useState<Set<string>>(new Set());
   const [isAnimating, setIsAnimating] = useState(false);
   const [animationDirection, setAnimationDirection] = useState<'left' | 'right' | 'up' | 'down' | null>(null);
+  const [isLoadingFeed, setIsLoadingFeed] = useState(true);
+  const [feedError, setFeedError] = useState<string | null>(null);
+
+  const loadFeed = useCallback(async () => {
+    setIsLoadingFeed(true);
+    setFeedError(null);
+
+    try {
+      const params = new URLSearchParams({ limit: '50' });
+      if (process.env.NEXT_PUBLIC_DEMO_BUYER_ID) {
+        params.set('buyerId', process.env.NEXT_PUBLIC_DEMO_BUYER_ID);
+      }
+
+      const res = await fetch(`/api/matches/feed?${params.toString()}`, {
+        method: 'GET',
+        cache: 'no-store',
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `Failed to load feed (${res.status})`);
+      }
+
+      const data = (await res.json()) as FeedResponse & { buyerId?: string };
+      setFeed(data.cards || []);
+      setSwipedIds(new Set());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to load feed.';
+      setFeedError(message);
+    } finally {
+      setIsLoadingFeed(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadFeed();
+  }, [loadFeed]);
 
   // Active cards = feed minus swiped
   const activeCards = feed.filter((c) => !swipedIds.has(c.matchId));
@@ -129,7 +165,12 @@ export default function MatchingCards({ onConnect }: MatchingCardsProps = {}) {
         await fetch(`/api/matches/${currentCard.matchId}/${actionPath}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ matchId: currentCard.matchId, action }),
+          body: JSON.stringify({
+            matchId: currentCard.matchId,
+            action,
+            buyerId: currentCard.buyerId,
+            exporterId: currentCard.exporterId || currentCard.matchId,
+          }),
         });
       } catch {
         // Swipe still works locally even if API fails (optimistic)
@@ -161,7 +202,7 @@ export default function MatchingCards({ onConnect }: MatchingCardsProps = {}) {
         setAnimationDirection(null);
       }, 300);
     },
-    [currentCard, isAnimating]
+    [currentCard, isAnimating, onConnect]
   );
 
   // Keyboard shortcuts
@@ -199,6 +240,29 @@ export default function MatchingCards({ onConnect }: MatchingCardsProps = {}) {
           : 'from-red-500 to-red-600';
 
   // ─── Empty state ───
+  if (isLoadingFeed) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-center">
+        <h3 className="text-xl font-bold text-white mb-2">Loading matches...</h3>
+        <p className="text-slate-400 max-w-sm leading-relaxed">
+          Fetching ranked opportunities from the ML backend.
+        </p>
+      </div>
+    );
+  }
+
+  if (feedError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-center">
+        <h3 className="text-xl font-bold text-white mb-2">Could not load matches</h3>
+        <p className="text-slate-400 max-w-sm leading-relaxed">{feedError}</p>
+        <Button onClick={loadFeed} className="mt-6 bg-sky-600 hover:bg-sky-700 text-white">
+          Retry
+        </Button>
+      </div>
+    );
+  }
+
   if (!currentCard) {
     return (
       <div className="flex flex-col items-center justify-center py-24 text-center">
@@ -211,7 +275,11 @@ export default function MatchingCards({ onConnect }: MatchingCardsProps = {}) {
         </p>
         <Button
           onClick={() => {
-            setSwipedIds(new Set());
+            if (feed.length === 0) {
+              void loadFeed();
+            } else {
+              setSwipedIds(new Set());
+            }
           }}
           className="mt-6 bg-sky-600 hover:bg-sky-700 text-white"
         >

@@ -1,12 +1,17 @@
-from fastapi.responses import ORJSONResponse
 from fastapi.encoders import jsonable_encoder
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import pandas as pd
 
+try:
+    import orjson  # noqa: F401
+    from fastapi.responses import ORJSONResponse as DefaultJSONResponse
+except Exception:
+    from fastapi.responses import JSONResponse as DefaultJSONResponse
+
 from .db import init_db, insert_swipe, log_update, fetch_swipes
-from .ml import HybridRanker
+from .ml.hybrid_ranker import HybridRanker
 from .pipeline import (
     engineer_buyer_features,
     engineer_exporter_features,
@@ -14,7 +19,7 @@ from .pipeline import (
 )
 import random
 
-app = FastAPI(title="Swipe to Export MVP", default_response_class=ORJSONResponse)
+app = FastAPI(title="Swipe to Export MVP", default_response_class=DefaultJSONResponse)
 
 app.add_middleware(
     CORSMiddleware,
@@ -47,7 +52,7 @@ def health():
 
 
 
-@app.get("/buyers", response_class=ORJSONResponse)
+@app.get("/buyers", response_class=DefaultJSONResponse)
 def buyers(limit: int = 50, offset: int = 0, q: str | None = None):
     b = STATE["buyers"]
     if b is None:

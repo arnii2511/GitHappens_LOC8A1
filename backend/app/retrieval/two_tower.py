@@ -23,18 +23,23 @@ class _TwoTowerConfig:
     neg_per_pos: int = 1
 
 
-class _Tower(nn.Module):
-    def __init__(self, in_dim: int, hidden_dim: int, out_dim: int):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(in_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(p=0.1),
-            nn.Linear(hidden_dim, out_dim),
-        )
+if TORCH_AVAILABLE and nn is not None:
+    class _Tower(nn.Module):
+        def __init__(self, in_dim: int, hidden_dim: int, out_dim: int):
+            super().__init__()
+            self.net = nn.Sequential(
+                nn.Linear(in_dim, hidden_dim),
+                nn.ReLU(),
+                nn.Dropout(p=0.1),
+                nn.Linear(hidden_dim, out_dim),
+            )
 
-    def forward(self, x):
-        return self.net(x)
+        def forward(self, x):
+            return self.net(x)
+else:
+    class _Tower:
+        def __init__(self, *_args, **_kwargs):
+            raise RuntimeError("Torch is unavailable; _Tower cannot be instantiated.")
 
 
 class TwoTowerRetriever:
@@ -268,8 +273,19 @@ class TwoTowerRetriever:
 
     def _fit_fallback(self):
         # Feature-cosine fallback when deep training is not possible.
-        self._buyer_emb = normalize_rows(self._buyer_matrix)
-        self._exporter_emb = normalize_rows(self._exporter_matrix)
+        b = np.asarray(self._buyer_matrix, dtype=np.float64)
+        e = np.asarray(self._exporter_matrix, dtype=np.float64)
+
+        # Buyer/exporter handcrafted feature blocks are not guaranteed to have
+        # equal width; align them so dot-products are valid in fallback mode.
+        target_dim = int(max(b.shape[1], e.shape[1], 1))
+        if b.shape[1] < target_dim:
+            b = np.pad(b, ((0, 0), (0, target_dim - b.shape[1])), mode="constant")
+        if e.shape[1] < target_dim:
+            e = np.pad(e, ((0, 0), (0, target_dim - e.shape[1])), mode="constant")
+
+        self._buyer_emb = normalize_rows(b)
+        self._exporter_emb = normalize_rows(e)
         self.backend = "feature_cosine"
         self.device = "cpu"
 
