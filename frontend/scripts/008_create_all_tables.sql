@@ -1,4 +1,9 @@
+-- ============================================================
+-- Full schema creation: profiles, organizations, trade_info,
+-- kyc_documents + storage bucket + RLS + auto-profile trigger
+-- ============================================================
 
+-- 1. PROFILES TABLE
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   account_type text not null default 'exporter' check (account_type in ('exporter', 'buyer')),
@@ -24,7 +29,7 @@ create policy "Users can insert own profile"
   with check (auth.uid() = id);
 
 
-
+-- 2. ORGANIZATIONS TABLE
 create table if not exists public.organizations (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -57,6 +62,7 @@ create policy "Users can update own organizations"
   using (auth.uid() = user_id);
 
 
+-- 3. TRADE_INFO TABLE
 create table if not exists public.trade_info (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -86,7 +92,7 @@ create policy "Users can update own trade info"
   using (auth.uid() = user_id);
 
 
-
+-- 4. KYC_DOCUMENTS TABLE
 create table if not exists public.kyc_documents (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -113,12 +119,12 @@ create policy "Users can update own kyc docs"
   using (auth.uid() = user_id);
 
 
-
+-- 5. STORAGE BUCKET for KYC documents
 insert into storage.buckets (id, name, public)
 values ('kyc-documents', 'kyc-documents', false)
 on conflict (id) do nothing;
 
-
+-- Storage policies: users can upload to their own folder
 create policy "Users can upload own KYC files"
   on storage.objects for insert
   with check (
@@ -141,7 +147,7 @@ create policy "Users can delete own KYC files"
   );
 
 
-
+-- 6. AUTO-CREATE PROFILE on user signup
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql

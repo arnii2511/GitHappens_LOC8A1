@@ -1,4 +1,4 @@
-
+-- Create trade_products table
 create table if not exists public.trade_products (
   id uuid primary key default gen_random_uuid(),
   org_id uuid not null references public.organizations(id) on delete cascade,
@@ -10,7 +10,7 @@ create table if not exists public.trade_products (
 
 alter table public.trade_products enable row level security;
 
-
+-- Create trade_preferences table
 create table if not exists public.trade_preferences (
   id uuid primary key default gen_random_uuid(),
   org_id uuid not null references public.organizations(id) on delete cascade,
@@ -21,7 +21,7 @@ create table if not exists public.trade_preferences (
 
 alter table public.trade_preferences enable row level security;
 
-
+-- RLS for trade_products: org members only
 create policy "trade_products_select" on public.trade_products
   for select using (
     exists (
@@ -58,7 +58,7 @@ create policy "trade_products_delete" on public.trade_products
     )
   );
 
-
+-- RLS for trade_preferences: org members only
 create policy "trade_prefs_select" on public.trade_preferences
   for select using (
     exists (

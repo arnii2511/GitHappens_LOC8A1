@@ -1,4 +1,4 @@
-
+-- Create kyc_documents table
 create table if not exists public.kyc_documents (
   id uuid primary key default gen_random_uuid(),
   org_id uuid not null references public.organizations(id) on delete cascade,
@@ -14,7 +14,7 @@ create table if not exists public.kyc_documents (
 
 alter table public.kyc_documents enable row level security;
 
-
+-- RLS: org members can view docs
 create policy "kyc_docs_select" on public.kyc_documents
   for select using (
     exists (
@@ -24,7 +24,7 @@ create policy "kyc_docs_select" on public.kyc_documents
     )
   );
 
-
+-- RLS: org members can upload docs
 create policy "kyc_docs_insert" on public.kyc_documents
   for insert with check (
     exists (
@@ -34,7 +34,7 @@ create policy "kyc_docs_insert" on public.kyc_documents
     )
   );
 
-
+-- RLS: org members can delete their own uploaded docs
 create policy "kyc_docs_delete" on public.kyc_documents
   for delete using (
     auth.uid() = uploaded_by

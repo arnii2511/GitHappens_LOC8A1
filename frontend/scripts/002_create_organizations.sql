@@ -1,4 +1,4 @@
-
+-- Create organizations table
 create table if not exists public.organizations (
   id uuid primary key default gen_random_uuid(),
   name text not null,
@@ -13,7 +13,7 @@ create table if not exists public.organizations (
 
 alter table public.organizations enable row level security;
 
-
+-- Create organization_members join table
 create table if not exists public.organization_members (
   id uuid primary key default gen_random_uuid(),
   org_id uuid not null references public.organizations(id) on delete cascade,
@@ -24,7 +24,7 @@ create table if not exists public.organization_members (
 
 alter table public.organization_members enable row level security;
 
-
+-- RLS for organizations: only members can view/update
 create policy "org_select_member" on public.organizations
   for select using (
     exists (
@@ -46,7 +46,7 @@ create policy "org_update_member" on public.organizations
     )
   );
 
-
+-- RLS for organization_members
 create policy "org_members_select_own" on public.organization_members
   for select using (auth.uid() = user_id);
 

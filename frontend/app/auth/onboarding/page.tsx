@@ -71,7 +71,7 @@ const LOGISTICS = [
   'Rail Freight', 'Multimodal', 'Warehousing', 'Cold Chain',
 ]
 
-
+/* ─── Types ─── */
 
 interface ProfileForm {
   accountType: 'exporter' | 'buyer'
@@ -102,7 +102,7 @@ interface TradeForm {
   logisticsCapabilities: string[]
 }
 
-
+/* ─── Component ─── */
 
 export default function OnboardingPage() {
   const router = useRouter()
@@ -112,14 +112,14 @@ export default function OnboardingPage() {
   const [error, setError] = useState<string | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
 
-  
+  // Step 1: Profile
   const [profile, setProfile] = useState<ProfileForm>({
     accountType: 'exporter',
     fullName: '',
     phone: '',
   })
 
-  
+  // Step 2: Organization
   const [org, setOrg] = useState<OrgForm>({
     companyName: '',
     registrationNumber: '',
@@ -133,7 +133,7 @@ export default function OnboardingPage() {
     description: '',
   })
 
-  
+  // Step 3: Trade Info
   const [trade, setTrade] = useState<TradeForm>({
     productCategories: [],
     primaryMarkets: [],
@@ -144,10 +144,10 @@ export default function OnboardingPage() {
     logisticsCapabilities: [],
   })
 
-  
+  // Step 4: KYC Documents
   const [files, setFiles] = useState<UploadedFile[]>([])
 
-  
+  // Check auth on mount
   useEffect(() => {
     async function init() {
       const supabase = createClient()
@@ -158,7 +158,7 @@ export default function OnboardingPage() {
       }
       setUserId(user.id)
 
-      
+      // Check if already completed onboarding
       const { data: existingProfile } = await supabase
         .from('profiles')
         .select('onboarding_completed')
@@ -166,7 +166,7 @@ export default function OnboardingPage() {
         .single()
 
       if (existingProfile?.onboarding_completed) {
-        router.push('/')
+        router.replace('/Dashboard')
         return
       }
 
@@ -175,7 +175,7 @@ export default function OnboardingPage() {
     init()
   }, [router])
 
-  
+  /* ─── Step Validation ─── */
 
   function isStepValid(s: number): boolean {
     switch (s) {
@@ -186,19 +186,19 @@ export default function OnboardingPage() {
       case 2:
         return trade.productCategories.length > 0 && trade.primaryMarkets.length > 0
       case 3:
-        return true 
+        return true // Documents are optional
       default:
         return false
     }
   }
 
-  
+  /* ─── Multi-select toggle helper ─── */
 
   function toggleArrayItem(arr: string[], item: string): string[] {
     return arr.includes(item) ? arr.filter((x) => x !== item) : [...arr, item]
   }
 
-  
+  /* ─── Submit all steps ─── */
 
   async function handleFinish() {
     if (!userId) return
@@ -208,7 +208,7 @@ export default function OnboardingPage() {
     try {
       const supabase = createClient()
 
-      
+      // Step 1: Update profile
       const { error: profileErr } = await supabase
         .from('profiles')
         .update({
@@ -221,10 +221,10 @@ export default function OnboardingPage() {
 
       if (profileErr) throw profileErr
 
-      
+      // Step 2: Create or update organization
       const { data: orgData, error: orgErr } = await supabase
         .from('organizations')
-        .insert({
+        .upsert({
           user_id: userId,
           company_name: org.companyName,
           registration_number: org.registrationNumber || null,
@@ -236,14 +236,14 @@ export default function OnboardingPage() {
           number_of_employees: org.numberOfEmployees || null,
           annual_revenue: org.annualRevenue || null,
           description: org.description || null,
-        })
+        }, { onConflict: 'user_id' })
         .select('id')
         .single()
 
       if (orgErr) throw orgErr
 
-      
-      const { error: tradeErr } = await supabase.from('trade_info').insert({
+      // Step 3: Create or update trade info
+      const { error: tradeErr } = await supabase.from('trade_info').upsert({
         user_id: userId,
         product_categories: trade.productCategories,
         primary_markets: trade.primaryMarkets,
@@ -252,11 +252,11 @@ export default function OnboardingPage() {
         preferred_payment_terms: trade.preferredPaymentTerms,
         preferred_incoterms: trade.preferredIncoterms,
         logistics_capabilities: trade.logisticsCapabilities,
-      })
+      }, { onConflict: 'user_id' })
 
       if (tradeErr) throw tradeErr
 
-      
+      // Step 4: Upload KYC documents
       const validFiles = files.filter((f) => f.status !== 'error')
       for (const f of validFiles) {
         const filePath = `${userId}/${Date.now()}-${f.name}`
@@ -266,7 +266,7 @@ export default function OnboardingPage() {
 
         if (uploadErr) {
           console.error('Upload error:', uploadErr)
-          continue 
+          continue // Don't block onboarding if a file upload fails
         }
 
         await supabase.from('kyc_documents').insert({
@@ -279,18 +279,25 @@ export default function OnboardingPage() {
         })
       }
 
-      
-      await supabase
+      // Mark onboarding as complete
+      const { error: completeErr } = await supabase
         .from('profiles')
-        .update({ onboarding_completed: true, updated_at: new Date().toISOString() })
+        .update({
+  onboarding_completed: true,
+  onboarding_completed_at: new Date().toISOString(),
+  updated_at: new Date().toISOString(),
+})
+
         .eq('id', userId)
 
-    
+      if (completeErr) throw completeErr
+
+      // Use orgData to avoid unused variable
       if (orgData?.id) {
         console.log('Organization created:', orgData.id)
       }
 
-      router.push('/')
+router.replace('/Dashboard')
       router.refresh()
     } catch (err) {
       console.error('Onboarding error:', err)
@@ -301,7 +308,7 @@ export default function OnboardingPage() {
     }
   }
 
-  
+  /* ─── Navigation ─── */
 
   function handleNext() {
     if (step < STEPS.length - 1) {
@@ -315,7 +322,7 @@ export default function OnboardingPage() {
     if (step > 0) setStep(step - 1)
   }
 
-  
+  /* ─── Render ─── */
 
   if (initializing) {
     return (
@@ -414,7 +421,11 @@ export default function OnboardingPage() {
   )
 }
 
+/* ═══════════════════════════════════════════════════════════════════
+   Step Sub-Components
+   ═══════════════════════════════════════════════════════════════════ */
 
+/* ─── Step 1: Profile ─── */
 
 function StepProfile({
   profile,
@@ -495,7 +506,7 @@ function StepProfile({
   )
 }
 
-
+/* ─── Step 2: Organization ─── */
 
 function StepOrganization({
   org,
@@ -669,7 +680,7 @@ function StepOrganization({
   )
 }
 
-
+/* ─── Step 3: Trade Info ─── */
 
 function StepTradeInfo({
   trade,
@@ -871,7 +882,7 @@ function StepTradeInfo({
   )
 }
 
-
+/* ─── Step 4: KYC Documents ─── */
 
 function StepDocuments({
   files,
@@ -899,8 +910,6 @@ function StepDocuments({
         <ul className="text-xs text-muted-foreground space-y-1 list-disc list-inside">
           <li>Business license / Company registration</li>
           <li>Tax certificate / VAT / GST registration</li>
-          
-          
         </ul>
       </div>
 

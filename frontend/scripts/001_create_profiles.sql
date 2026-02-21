@@ -1,4 +1,4 @@
-
+-- Create profiles table linked to auth.users
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   account_type text not null default 'exporter' check (account_type in ('exporter', 'buyer')),
@@ -11,7 +11,7 @@ create table if not exists public.profiles (
 
 alter table public.profiles enable row level security;
 
-
+-- RLS: users can only access their own profile
 create policy "profiles_select_own" on public.profiles
   for select using (auth.uid() = id);
 

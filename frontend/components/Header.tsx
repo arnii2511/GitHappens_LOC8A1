@@ -24,7 +24,7 @@ export default function Header({ notificationCount = 0, onNotificationClick }: H
             <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-cyan-500 rounded-lg blur opacity-50"></div>
             <div className="relative bg-slate-900 px-3 py-2 rounded-lg flex items-center gap-2">
               <Globe className="w-6 h-6 text-cyan-400" />
-              <span className="font-bold text-lg bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">TradeMatch</span>
+              <span className="font-bold text-lg bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">NexPort</span>
             </div>
           </div>
         </div>
