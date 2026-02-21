@@ -1,5 +1,4 @@
--- Auto-create profile row on user signup using a trigger
--- Uses security definer so it works before email confirmation
+
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
