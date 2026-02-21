@@ -166,7 +166,7 @@ export default function OnboardingPage() {
         .single()
 
       if (existingProfile?.onboarding_completed) {
-        router.replace('/Dashboard')
+        router.replace('/')
         return
       }
 
@@ -297,7 +297,7 @@ export default function OnboardingPage() {
         console.log('Organization created:', orgData.id)
       }
 
-router.replace('/Dashboard')
+      router.replace('/')
       router.refresh()
     } catch (err) {
       console.error('Onboarding error:', err)

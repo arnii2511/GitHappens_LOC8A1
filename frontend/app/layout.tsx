@@ -18,23 +18,6 @@ export const metadata: Metadata = {
   description: 'Intelligent matchmaking platform connecting exporters with qualified global buyers using advanced AI scoring and real-time market signals.',
   generator: 'v0.app',
   keywords: ['trade', 'export', 'import', 'B2B', 'matching', 'AI', 'global commerce'],
-  icons: {
-    icon: [
-      {
-        url: '/icon-light-32x32.png',
-        media: '(prefers-color-scheme: light)',
-      },
-      {
-        url: '/icon-dark-32x32.png',
-        media: '(prefers-color-scheme: dark)',
-      },
-      {
-        url: '/icon.svg',
-        type: 'image/svg+xml',
-      },
-    ],
-    apple: '/apple-icon.png',
-  },
 }
 
 export default function RootLayout({

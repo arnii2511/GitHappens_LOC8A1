@@ -1,16 +1,18 @@
-import { createServerClient } from '@supabase/ssr'
-import { NextResponse, type NextRequest } from 'next/server'
+import { createServerClient, type CookieOptions } from "@supabase/ssr"
+import { NextRequest, NextResponse } from "next/server"
 
 export async function updateSession(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({
-    request,
-  })
+  let supabaseResponse = NextResponse.next({ request })
+  type CookieToSet = {
+    name: string
+    value: string
+    options: CookieOptions
+  }
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 
   if (!supabaseUrl || !supabaseAnonKey) {
-    // Env vars not yet available -- let the request through so pages can render
     return supabaseResponse
   }
 
@@ -22,54 +24,62 @@ export async function updateSession(request: NextRequest) {
         getAll() {
           return request.cookies.getAll()
         },
-        setAll(cookiesToSet) {
+        setAll(cookiesToSet: CookieToSet[]) {
           cookiesToSet.forEach(({ name, value }) =>
-            request.cookies.set(name, value),
+            request.cookies.set(name, value)
           )
-          supabaseResponse = NextResponse.next({
-            request,
-          })
+          supabaseResponse = NextResponse.next({ request })
           cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options),
+            supabaseResponse.cookies.set(name, value, options)
           )
         },
       },
-    },
+    }
   )
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
 
   const { pathname } = request.nextUrl
 
-  // Public auth routes - allow freely
-  const publicPaths = ['/auth/login', '/auth/sign-up', '/auth/sign-up-success', '/auth/error']
-  const isPublicAuth = publicPaths.some((p) => pathname.startsWith(p))
+  // ✅ Define public routes FIRST
+  const publicPaths = [
+    '/auth/login',
+    '/auth/sign-up',
+    '/auth/sign-up-success',
+    '/auth/error'
+  ]
+
+  const isPublicAuth = publicPaths.some((p) =>
+    pathname.startsWith(p)
+  )
 
   if (isPublicAuth) {
-    // If user is already logged in and tries to access auth pages, redirect to main app
-    if (user) {
-      // Check if they have completed onboarding by checking profile
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('full_name')
-        .eq('id', user.id)
-        .single()
-
-      const url = request.nextUrl.clone()
-      if (profile?.full_name) {
-        url.pathname = '/'
-        return NextResponse.redirect(url)
-      } else {
-        url.pathname = '/auth/onboarding'
-        return NextResponse.redirect(url)
-      }
-    }
     return supabaseResponse
   }
 
-  // Protected: onboarding route
+  // 🔥 ONLY NOW check user
+  let user = null
+  const hasSupabaseAuthCookie = request.cookies
+    .getAll()
+    .some(({ name }) => name.startsWith('sb-') && name.includes('auth-token'))
+
+  if (hasSupabaseAuthCookie) {
+    try {
+      const { data, error } = await supabase.auth.getUser()
+      user = data?.user ?? null
+      if (error) {
+        const code = (error as { code?: string }).code
+        if (code !== 'refresh_token_not_found') {
+          console.error('Supabase auth error in middleware:', error)
+        }
+      }
+    } catch (error) {
+      const code = (error as { code?: string }).code
+      if (code !== 'refresh_token_not_found') {
+        console.error('Supabase auth error in middleware:', error)
+      }
+    }
+  }
+
+  // Protected: onboarding
   if (pathname.startsWith('/auth/onboarding')) {
     if (!user) {
       const url = request.nextUrl.clone()
@@ -79,7 +89,7 @@ export async function updateSession(request: NextRequest) {
     return supabaseResponse
   }
 
-  // Protected: profile page
+  // Protected: profile
   if (pathname.startsWith('/profile')) {
     if (!user) {
       const url = request.nextUrl.clone()
@@ -89,13 +99,7 @@ export async function updateSession(request: NextRequest) {
     return supabaseResponse
   }
 
-  // Protected: API routes
-  if (pathname.startsWith('/api/profile')) {
-    // Let the API route itself handle auth (it checks getUser)
-    return supabaseResponse
-  }
-
-  // Protected: main app (everything else that isn't a public path)
+  // Root protection
   if (!user && pathname === '/') {
     const url = request.nextUrl.clone()
     url.pathname = '/auth/login'
