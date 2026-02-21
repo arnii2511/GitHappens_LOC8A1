@@ -64,10 +64,10 @@ export default function LoginPage() {
         {/* Logo */}
         <div className="flex flex-col items-center gap-3">
           <div className="relative">
-            <div className="absolute inset-0 bg-gradient-to-r from-blue-600 to-cyan-500 rounded-lg blur opacity-50" />
+            <div className="absolute inset-0 bg-linear-to-r from-blue-600 to-cyan-500 rounded-lg blur opacity-50" />
             <div className="relative bg-card px-3 py-2 rounded-lg flex items-center gap-2">
               <Globe className="w-6 h-6 text-secondary" />
-              <span className="font-bold text-lg bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
+              <span className="font-bold text-lg bg-linear-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
                 NexPort
               </span>
             </div>

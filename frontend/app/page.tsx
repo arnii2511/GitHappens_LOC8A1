@@ -1,23 +1,29 @@
 "use client"
 
 import LoginPage from "./auth/login/page"
+import { Globe } from 'lucide-react'
 
 export default function Page() {
   return (
     <div className="min-h-screen flex bg-background text-foreground">
 
       {/* LEFT SIDE */}
-      <div className="hidden lg:flex lg:w-1/2 relative flex-col justify-between p-16 bg-muted/40 border-r border-border">
+      <div className="hidden lg:flex lg:w-1/2 relative flex-col justify-between p-16 bg-linear-to-r from-blue-800 to-cyan-700 rounded-none border-r border-border">
 
         {/* Soft Accent Glow */}
-        <div className="absolute top-0 left-0 w-72 h-72 bg-primary/10 blur-3xl rounded-full -z-10" />
+        <div className="absolute top-0 left-0 w-72 h-72" />
 
         {/* Logo */}
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-primary rounded-xl shadow-sm" />
-          <h1 className="text-2xl font-semibold tracking-tight">
-            NexPort
-          </h1>
+        <div className="flex flex-col items-start gap-3">
+          <div className="relative">
+            <div className="absolute inset-0 bg-linear-to-r from-blue-600 to-cyan-500 rounded-lg blur opacity-50" />
+            <div className="relative bg-card px-3 py-2 rounded-lg flex items-center gap-2">
+              <Globe className="w-6 h-6 text-secondary" />
+              <span className="font-bold text-lg bg-linear-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
+                NexPort
+              </span>
+            </div>
+          </div>
         </div>
 
         {/* Hero Content */}
