@@ -1,3 +1,7 @@
+from fastapi.responses import ORJSONResponse
+from fastapi.encoders import jsonable_encoder
+import numpy as np
+import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -6,7 +10,7 @@ from .db import init_db, insert_swipe, log_update
 from .scoring import load_data, compute_buyer_scores, compute_exporter_scores, build_feed_for_buyer
 import random
 
-app = FastAPI(title="Swipe to Export MVP")
+app = FastAPI(title="Swipe to Export MVP", default_response_class=ORJSONResponse)
 
 app.add_middleware(
     CORSMiddleware,
@@ -30,14 +34,18 @@ def on_startup():
 def health():
     return {"ok": True}
 
-@app.get("/buyers")
+@app.get("/buyers", response_class=ORJSONResponse)
 def buyers():
     b = STATE["buyers"]
     if b is None:
         raise HTTPException(500, "Data not loaded")
+
     out = b[["Buyer_ID", "Country", "Industry", "Date"]].copy()
     out["Date"] = out["Date"].astype(str)
-    return out.to_dict(orient="records")
+
+    # Force Python-native types + None for missing
+    records = out.where(out.notna(), None).to_dict(orient="records")
+    return records
 
 @app.get("/feed")
 def feed(buyer_id: str, limit: int = 10):
@@ -53,7 +61,7 @@ def feed(buyer_id: str, limit: int = 10):
         raise HTTPException(404, "Buyer not found")
 
     cards = build_feed_for_buyer(row.iloc[0], e, n, top_k=limit)
-    return {"buyer_id": buyer_id, "cards": cards}
+    return jsonable_encoder({"buyer_id": buyer_id, "cards": cards})
 
 class SwipeIn(BaseModel):
     buyer_id: str

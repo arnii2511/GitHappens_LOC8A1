@@ -5,7 +5,8 @@ from dotenv import load_dotenv
 from datetime import timedelta
 
 load_dotenv()
-DATA_DIR = os.getenv("DATA_DIR", "../data")
+DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "clean")
+DATA_DIR = os.path.abspath(DATA_DIR)
 
 def _cert_score(x: str) -> float:
     if not isinstance(x, str) or x.strip() == "" or x.strip().lower() == "none":
@@ -24,10 +25,9 @@ def _impact_weight(level: str) -> float:
     return 0.6
 
 def load_data():
-    buyers = pd.read_csv(os.path.join(DATA_DIR, "EXIM_DatasetAlgo_Hackathon(Importer_LiveSignals_v5_Updated).csv"), encoding="utf-8", engine="python")
-    exporters = pd.read_csv(os.path.join(DATA_DIR, "EXIM_DatasetAlgo_Hackathon(Exporter_LiveSignals_v5_Updated).csv"), encoding="utf-8", engine="python")
-    news = pd.read_csv(os.path.join(DATA_DIR, "EXIM_DatasetAlgo_Hackathon(Global_News_LiveSignals_Updated).csv"), encoding="utf-8", engine="python")
-
+    buyers = pd.read_csv(os.path.join(DATA_DIR, "buyers_clean.csv"))
+    exporters = pd.read_csv(os.path.join(DATA_DIR, "exporters_clean.csv"))
+    news = pd.read_csv(os.path.join(DATA_DIR, "news_clean.csv"))
     for df in (buyers, exporters, news):
         df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
 
