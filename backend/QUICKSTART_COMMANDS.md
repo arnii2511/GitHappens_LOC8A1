@@ -24,10 +24,22 @@ pip install cupy-cuda12x
 
 Use the CuPy package that matches your CUDA version (`cuda11x`, `cuda12x`, etc.).
 
+Quick GPU readiness check:
+
+```bash
+python backend\scripts\check_gpu_stack.py
+```
+
 ## 4A. Create synthetic swipe labels (if you do not have real swipe history)
 
 ```bash
 python backend\scripts\generate_synthetic_swipes.py --rows 12000 --buyers-sample 1200 --per-buyer-min 8 --per-buyer-max 20 --days-back 700 --seed 42 --right-bias 0.1 --out-csv data/labels/swipes_labeled.csv
+```
+
+More realistic imitation (uses match/trust/risk/industry similarity + behavior history):
+
+```bash
+python backend\scripts\generate_imitation_swipes.py --rows 12000 --buyers-sample 1000 --per-buyer-min 8 --per-buyer-max 20 --days-back 700 --seed 42 --right-bias 0.0 --out-csv data/labels/swipes_labeled.csv
 ```
 
 ## 4B. Or create real labels manually (interactive)
@@ -40,6 +52,12 @@ python backend\scripts\collect_labels.py --target 300 --buyers 80 --cands-per-bu
 
 ```bash
 python backend\scripts\train_ranker.py --gpu --swipes-csv data/labels/swipes_labeled.csv --model-out models/ranker.pkl
+```
+
+Optional: train retrieval stack separately
+
+```bash
+python backend\scripts\train_retrieval.py --gpu --swipes-csv data/labels/swipes_labeled.csv --model-out models/retrieval.pkl
 ```
 
 If you want strict GPU-only training check:
@@ -68,9 +86,26 @@ Direct buyer id:
 python backend\scripts\suggest_top_exporters.py --buyer-id BUY_69687 --top-k 10 --model-in models/ranker.pkl
 ```
 
+Inspect only retrieval candidates (before reranking):
+
+```bash
+python backend\scripts\retrieve_candidates.py --buyer-id BUY_69687 --top-k 20 --model-in models/ranker.pkl
+```
+
+Inspect learned cross-industry association rules:
+
+```bash
+python backend\scripts\inspect_industry_rules.py --model-in models/ranker.pkl --top 8
+```
+
 Prompt mode (asks buyer id):
 
 ```bash
 python backend\scripts\suggest_top_exporters.py --top-k 10 --model-in models/ranker.pkl
 ```
 
+## 8. Profile dataset quality (optional)
+
+```bash
+python backend\scripts\profile_dataset.py --swipes-csv backend/data/labels/swipes_labeled.csv
+```

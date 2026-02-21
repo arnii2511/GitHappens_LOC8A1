@@ -47,7 +47,7 @@ class LearningToRankModel:
             ]
 
         for backend, device in train_plan:
-            if backend == "xgboost" and self._fit_xgboost(X, y, group=group, device=device):
+            if backend == "xgboost" and self._fit_xgboost(X, y, group=group, sample_weight=w, device=device):
                 return
             if backend == "lightgbm" and self._fit_lightgbm(X, y, group=group, sample_weight=w, device=device):
                 return
@@ -57,36 +57,72 @@ class LearningToRankModel:
         self.device = "cpu"
         self.ready = False
 
-    def _fit_xgboost(self, X: np.ndarray, y: np.ndarray, group: list[int], device: str) -> bool:
+    def _fit_xgboost(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        group: list[int],
+        sample_weight: np.ndarray,
+        device: str,
+    ) -> bool:
         if not XGBOOST_AVAILABLE:
             return False
-        try:
-            params = {
-                "objective": "rank:ndcg",
-                "n_estimators": 180,
-                "learning_rate": 0.05,
-                "max_depth": 6,
-                "subsample": 0.9,
-                "colsample_bytree": 0.9,
-                "reg_lambda": 1.0,
-                "random_state": self.random_state,
-                "tree_method": "hist",
-            }
-            if device == "gpu":
-                params["device"] = "cuda"
+        param_grid = [
+            {"n_estimators": 240, "learning_rate": 0.05, "max_depth": 6, "min_child_weight": 2, "gamma": 0.05},
+            {"n_estimators": 320, "learning_rate": 0.03, "max_depth": 8, "min_child_weight": 3, "gamma": 0.1},
+            {"n_estimators": 180, "learning_rate": 0.08, "max_depth": 4, "min_child_weight": 5, "gamma": 0.2},
+        ]
+        best_model = None
+        best_score = -1.0
 
-            self.model = XGBRanker(**params)
-            self.model.fit(X, y, group=group, verbose=False)
-            self.backend = "xgboost"
-            self.device = device
-            self.ready = True
-            return True
-        except Exception:
+        for trial in param_grid:
+            try:
+                params = {
+                    "objective": "rank:ndcg",
+                    "subsample": 0.9,
+                    "colsample_bytree": 0.9,
+                    "reg_lambda": 1.0,
+                    "random_state": self.random_state,
+                    "tree_method": "hist",
+                    **trial,
+                }
+                if device == "gpu":
+                    params["device"] = "cuda"
+
+                model = XGBRanker(**params)
+                try:
+                    model.fit(X, y, group=group, sample_weight=sample_weight, verbose=False)
+                except Exception:
+                    model.fit(X, y, group=group, verbose=False)
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "ignore",
+                        message=".*Falling back to prediction using DMatrix due to mismatched devices.*",
+                        category=UserWarning,
+                    )
+                    if device == "gpu" and CUPY_AVAILABLE:
+                        pred = cp.asnumpy(model.predict(cp.asarray(X))).astype(np.float64)
+                    else:
+                        pred = np.asarray(model.predict(X), dtype=np.float64)
+                score = self._group_ndcg(y, pred, group, k=10)
+                if score > best_score:
+                    best_score = score
+                    best_model = model
+            except Exception:
+                continue
+
+        if best_model is None:
             self.model = None
             self.backend = None
             self.device = "cpu"
             self.ready = False
             return False
+
+        self.model = best_model
+        self.backend = "xgboost"
+        self.device = device
+        self.ready = True
+        return True
 
     def _fit_lightgbm(
         self,
@@ -98,33 +134,49 @@ class LearningToRankModel:
     ) -> bool:
         if not LIGHTGBM_AVAILABLE:
             return False
-        try:
-            params = {
-                "objective": "lambdarank",
-                "metric": "ndcg",
-                "n_estimators": 150,
-                "learning_rate": 0.06,
-                "num_leaves": 31,
-                "min_data_in_leaf": 20,
-                "subsample": 0.9,
-                "colsample_bytree": 0.9,
-                "random_state": self.random_state,
-            }
-            if device == "gpu":
-                params["device"] = "gpu"
+        param_grid = [
+            {"n_estimators": 180, "learning_rate": 0.06, "num_leaves": 31, "min_data_in_leaf": 20},
+            {"n_estimators": 260, "learning_rate": 0.04, "num_leaves": 63, "min_data_in_leaf": 30},
+            {"n_estimators": 140, "learning_rate": 0.09, "num_leaves": 24, "min_data_in_leaf": 15},
+        ]
+        best_model = None
+        best_score = -1.0
 
-            self.model = LGBMRanker(**params)
-            self.model.fit(X, y, group=group, sample_weight=sample_weight)
-            self.backend = "lightgbm"
-            self.device = device
-            self.ready = True
-            return True
-        except Exception:
+        for trial in param_grid:
+            try:
+                params = {
+                    "objective": "lambdarank",
+                    "metric": "ndcg",
+                    "subsample": 0.9,
+                    "colsample_bytree": 0.9,
+                    "random_state": self.random_state,
+                    **trial,
+                }
+                if device == "gpu":
+                    params["device"] = "gpu"
+
+                model = LGBMRanker(**params)
+                model.fit(X, y, group=group, sample_weight=sample_weight)
+                pred = np.asarray(model.predict(X), dtype=np.float64)
+                score = self._group_ndcg(y, pred, group, k=10)
+                if score > best_score:
+                    best_score = score
+                    best_model = model
+            except Exception:
+                continue
+
+        if best_model is None:
             self.model = None
             self.backend = None
             self.device = "cpu"
             self.ready = False
             return False
+
+        self.model = best_model
+        self.backend = "lightgbm"
+        self.device = device
+        self.ready = True
+        return True
 
     def score(self, feature_df: pd.DataFrame) -> np.ndarray:
         if feature_df.empty:
@@ -210,7 +262,7 @@ class LearningToRankModel:
 
         x = train_df[FEATURE_COLUMNS].to_numpy(dtype=np.float64)
         y = train_df["label"].to_numpy(dtype=np.int64)
-        w = train_df["weight"].to_numpy(dtype=np.float64)
+        w = train_df["weight"].to_numpy(dtype=np.float64) * self._class_balance_weights(y)
         return x, y, group, w
 
     def _build_bootstrap_dataset(self, builder: "PairFeatureBuilder") -> Tuple[np.ndarray, np.ndarray, list[int], np.ndarray]:
@@ -240,5 +292,45 @@ class LearningToRankModel:
         group = train_df.groupby("qid", sort=False).size().astype(int).tolist()
         x = train_df[FEATURE_COLUMNS].to_numpy(dtype=np.float64)
         y = train_df["label"].to_numpy(dtype=np.int64)
-        w = train_df["weight"].to_numpy(dtype=np.float64)
+        w = train_df["weight"].to_numpy(dtype=np.float64) * self._class_balance_weights(y)
         return x, y, group, w
+
+    def _class_balance_weights(self, y: np.ndarray) -> np.ndarray:
+        y = np.asarray(y, dtype=np.int64)
+        if y.size == 0:
+            return np.array([], dtype=np.float64)
+        n_pos = float(np.sum(y == 1))
+        n_neg = float(np.sum(y == 0))
+        if n_pos <= 0 or n_neg <= 0:
+            return np.ones(y.shape[0], dtype=np.float64)
+        pos_w = y.size / (2.0 * n_pos)
+        neg_w = y.size / (2.0 * n_neg)
+        return np.where(y == 1, pos_w, neg_w).astype(np.float64)
+
+    def _group_ndcg(self, y_true: np.ndarray, y_pred: np.ndarray, group: list[int], k: int = 10) -> float:
+        if y_true.size == 0 or y_pred.size == 0 or not group:
+            return 0.0
+        offset = 0
+        scores = []
+        for g in group:
+            size = int(g)
+            if size <= 1:
+                offset += size
+                continue
+            yt = y_true[offset:offset + size]
+            yp = y_pred[offset:offset + size]
+            offset += size
+
+            order = np.argsort(-yp)
+            top = yt[order][:k]
+            gains = top.astype(np.float64)
+            discounts = np.log2(np.arange(2, len(top) + 2, dtype=np.float64))
+            dcg = float(np.sum(gains / discounts))
+
+            ideal = np.sort(yt)[::-1][:k].astype(np.float64)
+            idcg = float(np.sum(ideal / discounts[: len(ideal)]))
+            if idcg > 0.0:
+                scores.append(dcg / idcg)
+        if not scores:
+            return 0.0
+        return float(np.mean(scores))

@@ -54,6 +54,7 @@ def main():
     sys.path.insert(0, root)
 
     from app.ml import HybridRanker
+    from app.ml.common import CUPY_AVAILABLE
     from app.pipeline import engineer_buyer_features, engineer_exporter_features, load_data_clean
 
     buyers_raw, exporters_raw, news = load_data_clean()
@@ -70,17 +71,25 @@ def main():
     print(
         f"Supervised: {ranker.supervised.backend or 'none'} ({ranker.supervised.device}) | "
         f"Collaborative: svd ({ranker.collaborative.device}) | "
-        f"LTR: {ranker.ltr.backend or 'none'} ({ranker.ltr.device})"
+        f"LTR: {ranker.ltr.backend or 'none'} ({ranker.ltr.device}) | "
+        f"Retrieval: {ranker.retriever.backend or 'none'} ({ranker.retriever.device}) | "
+        f"Text: {ranker.text_encoder.backend or 'none'}"
     )
+    if prefer_gpu and ranker.collaborative.device != "gpu":
+        if not CUPY_AVAILABLE:
+            print("GPU note: collaborative SVD stayed on CPU because CuPy is not installed.")
+        else:
+            print("GPU note: collaborative SVD stayed on CPU due runtime fallback.")
 
     if args.strict_gpu:
-        devices = [ranker.supervised.device, ranker.collaborative.device, ranker.ltr.device]
+        devices = [ranker.supervised.device, ranker.collaborative.device, ranker.ltr.device, ranker.retriever.device]
         if any(d != "gpu" for d in devices):
             raise RuntimeError(
                 "Strict GPU mode failed. Devices: "
                 f"supervised={ranker.supervised.device}, "
                 f"collaborative={ranker.collaborative.device}, "
-                f"ltr={ranker.ltr.device}"
+                f"ltr={ranker.ltr.device}, "
+                f"retrieval={ranker.retriever.device}"
             )
 
     out_path = _resolve_path(root, args.model_out)

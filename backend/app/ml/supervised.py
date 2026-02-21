@@ -64,14 +64,21 @@ class OnlineSupervisedModel:
         if not XGBOOST_AVAILABLE:
             return False
         try:
+            n_pos = float(np.sum(y == 1))
+            n_neg = float(np.sum(y == 0))
+            scale_pos_weight = float(n_neg / max(1.0, n_pos))
             params = {
                 "objective": "binary:logistic",
                 "n_estimators": 220,
                 "learning_rate": 0.05,
                 "max_depth": 6,
+                "min_child_weight": 3,
+                "gamma": 0.1,
                 "subsample": 0.9,
                 "colsample_bytree": 0.9,
                 "reg_lambda": 1.0,
+                "max_delta_step": 1,
+                "scale_pos_weight": scale_pos_weight,
                 "random_state": self.random_state,
                 "tree_method": "hist",
                 "device": "cuda",

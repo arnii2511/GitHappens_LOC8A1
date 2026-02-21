@@ -1,5 +1,8 @@
+import os
 import numpy as np
 import pandas as pd
+
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 
 try:
     from scipy import sparse
@@ -39,6 +42,36 @@ try:
 except Exception:
     cp = None
     CUPY_AVAILABLE = False
+
+try:
+    from sklearn.neighbors import NearestNeighbors
+    from sklearn.feature_extraction.text import TfidfVectorizer
+
+    SKLEARN_TEXT_AVAILABLE = True
+except Exception:
+    NearestNeighbors = None
+    TfidfVectorizer = None
+    SKLEARN_TEXT_AVAILABLE = False
+
+try:
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+
+    TORCH_AVAILABLE = True
+except Exception:
+    torch = None
+    nn = None
+    F = None
+    TORCH_AVAILABLE = False
+
+try:
+    from sentence_transformers import SentenceTransformer
+
+    SENTENCE_TRANSFORMERS_AVAILABLE = True
+except Exception:
+    SentenceTransformer = None
+    SENTENCE_TRANSFORMERS_AVAILABLE = False
 
 
 def as_text(value) -> str:

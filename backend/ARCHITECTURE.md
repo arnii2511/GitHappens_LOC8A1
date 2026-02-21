@@ -36,15 +36,25 @@ For setup/training/evaluation commands on a new machine, see `backend/QUICKSTART
 
 ### `app/ml/`
 - `feature_builder.py`: pairwise candidate feature construction.
+  - Adds behavior history features (buyer/exporter/pair swipe rates, recency, interaction depth).
+  - Builds hybrid candidate pool: strong industry-similarity core + controlled diverse exploration pool.
 - `supervised.py`: online supervised ranking model.
+  - Uses class-imbalance handling (sample/class weighting).
 - `collaborative.py`: interaction embedding model (SVD).
 - `ltr.py`: learning-to-rank model (LightGBM/XGBoost with fallback).
+  - Runs small parameter search and picks best trial by ranking quality.
   - Tries GPU first when enabled, then safely falls back to CPU.
 - `time_decay.py`: recency weighting for interactions.
  - Full end-to-end GPU requires CUDA-enabled XGBoost and CuPy (for collaborative SVD + GPU-side prediction input).
 - `hybrid_ranker.py`: orchestrates supervised + collaborative blend.
 - `constants.py`: shared ML feature column contract.
 - `common.py`: shared ML utility functions and sklearn/scipy availability.
+
+### `app/retrieval/`
+- `text_encoder.py`: semantic text embeddings (SentenceTransformer with TF-IDF fallback).
+- `two_tower.py`: dual-encoder retrieval model (buyer tower + exporter tower).
+- `ann_index.py`: ANN candidate search over exporter embeddings.
+- `industry_rules.py`: cross-industry association mining (support/confidence/lift) for candidate expansion.
 
 ### Compatibility Layers
 - `app/scoring.py`: facade that re-exports pipeline APIs for older imports.
@@ -57,10 +67,13 @@ For setup/training/evaluation commands on a new machine, see `backend/QUICKSTART
 - supervised learner from interactions (or bootstrap labels)
 - collaborative SVD embeddings from swipe matrix
 - learning-to-rank model for final ordering refinement
-4. Candidate generation uses industry canonicalization + related-industry similarity thresholding.
-5. Match scoring uses dynamic weights that adapt by missing buyer capacity data and macro-risk intensity.
-6. Scores are blended with adaptive collaborative weight based on per-buyer interaction depth.
-7. Contextual exploration injects high-potential unseen exporters into top results occasionally.
-8. `/feed` builds candidate features, scores via hybrid model, returns ranked cards.
-9. `/swipe` persists action and updates model online.
-10. `/simulate/update` mutates news and refreshes ranker risk cache.
+4. Two-tower retrieval model learns buyer/exporter latent embeddings from interactions.
+5. Industry association rules expand candidate industries beyond strict direct matching.
+6. Two-tower retrieval scores expanded candidates and returns top-N.
+7. Candidate generation applies industry canonicalization + related-industry similarity and dynamic feature construction.
+8. Match scoring uses dynamic weights (risk/data-quality aware) + behavior-history features + text similarity.
+9. LTR and supervised models rerank retrieved candidates, blended with collaborative signals.
+10. Contextual exploration injects high-potential unseen exporters into top results occasionally.
+11. `/feed` returns final ranked cards.
+12. `/swipe` persists action and updates online learners; retrieval refreshes periodically.
+13. `/simulate/update` mutates news and refreshes risk cache.

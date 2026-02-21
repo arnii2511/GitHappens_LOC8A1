@@ -12,7 +12,7 @@ class ModelExplainer:
     True model-level explainability layer.
 
     Works with:
-    - SGDClassifier (linear → coefficient-based contribution)
+    - SGDClassifier (linear -> coefficient-based contribution)
     - XGBoost (feature importance based explanation)
     - Fallback baseline (match_after_risk based)
 
@@ -43,7 +43,7 @@ class ModelExplainer:
         return self._explain_fallback(feature_row, predicted_proba)
 
     # ================================================================
-    # SGD (LINEAR MODEL) — TRUE FEATURE CONTRIBUTION
+    # SGD (LINEAR MODEL) - TRUE FEATURE CONTRIBUTION
     # ================================================================
 
     def _explain_sgd(self, row: pd.Series, proba: float) -> Dict[str, Any]:
@@ -78,7 +78,7 @@ class ModelExplainer:
         }
 
     # ================================================================
-    # XGBOOST — FEATURE IMPORTANCE BASED
+    # XGBOOST - FEATURE IMPORTANCE BASED
     # ================================================================
 
     def _explain_xgb(self, row: pd.Series, proba: float) -> Dict[str, Any]:

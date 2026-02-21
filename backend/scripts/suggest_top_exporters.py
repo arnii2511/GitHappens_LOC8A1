@@ -3,6 +3,7 @@ import json
 import os
 import pickle
 import sys
+
 import pandas as pd
 
 
@@ -51,50 +52,68 @@ def main():
         raise ValueError(f"Buyer_ID '{buyer_id}' not found in trained model. Sample IDs: {sample}")
 
     cards = ranker.rank_for_buyer(row.iloc[0], top_k=max(1, int(args.top_k)))
-
     if not cards:
         print("No exporters found for this buyer.")
         return
 
     explainer = ModelExplainer(ranker.supervised)
+    retrieval_top = max(200, max(1, int(args.top_k)) * 25)
+    retrieval_candidates = None
+    if hasattr(ranker, "retriever") and getattr(ranker.retriever, "ready", False):
+        retrieval_candidates = ranker.retriever.retrieve_for_buyer(str(buyer_id), top_k=retrieval_top)
+    feature_df, _ = ranker.builder.candidate_features_for_buyer(row.iloc[0], retrieval_candidates=retrieval_candidates)
+    feature_map = {}
+    if feature_df is not None and not feature_df.empty and "exporter_id" in feature_df.columns:
+        feature_map = {
+            str(r["exporter_id"]): r
+            for _, r in feature_df.iterrows()
+        }
 
-    feature_df, _ = ranker.builder.candidate_features_for_buyer(row.iloc[0])
-
-    for i, card in enumerate(cards):
-        if i < len(feature_df):
-            feature_row = feature_df.iloc[i]
-            proba = card["ml_score"] / 100.0
-            explanation = explainer.explain_prediction(feature_row, proba)
-            card["model_explanation"] = explanation
+    for card in cards:
+        ex_id = str(card.get("exporter_id", ""))
+        feature_row = feature_map.get(ex_id)
+        if feature_row is None:
+            pair_df = ranker.builder.single_pair_features(str(buyer_id), ex_id)
+            if pair_df is not None and not pair_df.empty:
+                feature_row = pair_df.iloc[0]
+        if feature_row is None:
+            continue
+        proba = float(pd.to_numeric(card.get("ml_score", 0.0), errors="coerce")) / 100.0
+        card["model_explanation"] = explainer.explain_prediction(feature_row, proba)
 
     preview_cols = [
         "exporter_id",
         "final_rank",
+        "retrieval_score",
         "ml_score",
         "collab_score",
         "ltr_score",
+        "text_similarity",
         "confidence",
         "is_exploration",
         "industry_similarity",
+        "industry_assoc_score",
+        "candidate_source",
         "match_score",
         "risk_penalty",
     ]
-    preview = pd.DataFrame(cards)[preview_cols]
+    preview_df = pd.DataFrame(cards)
+    for col in preview_cols:
+        if col not in preview_df.columns:
+            preview_df[col] = None
+    preview = preview_df[preview_cols]
     print(preview.to_string(index=False))
 
     print("\n================ EXPLANATION PREVIEW ================\n")
+    for card in cards[:3]:
+        print(f"Exporter: {card.get('exporter_id')}")
+        print(f"Final Rank: {card.get('final_rank')}")
+        print(f"Confidence: {card.get('confidence')}")
 
-    for card in cards[:3]:  # show first 3 exporters only
-        print(f"Exporter: {card['exporter_id']}")
-        print(f"Final Rank: {card['final_rank']}")
-        print(f"Confidence: {card['confidence']}")
-    
         explanation = card.get("model_explanation", {})
-    
         print("Model Type:", explanation.get("model_type"))
         print("Prediction Direction:", explanation.get("prediction_direction"))
         print("Summary:", explanation.get("summary"))
-    
         print("Top Drivers:")
         if "top_positive_drivers" in explanation:
             print("  Positive:", explanation["top_positive_drivers"][:2])
@@ -102,8 +121,8 @@ def main():
             print("  Negative:", explanation["top_negative_drivers"][:2])
         if "top_important_features" in explanation:
             print("  Important:", explanation["top_important_features"][:3])
-
         print("--------------------------------------------------")
+
     if args.out_json:
         out_json = _resolve_path(root, args.out_json)
         out_dir = os.path.dirname(out_json)

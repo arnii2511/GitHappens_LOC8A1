@@ -8,6 +8,7 @@ import pandas as pd
 
 from ..pipeline.checklist import verification_checklist
 from ..pipeline.helpers import safe_float
+from ..retrieval import TextEmbeddingService, TwoTowerRetriever
 from .collaborative import CollaborativeModel
 from .common import as_text
 from .feature_builder import PairFeatureBuilder
@@ -67,10 +68,22 @@ class HybridRanker:
         self.exploration_rate = float(np.clip(exploration_rate, 0.0, 0.5))
         self.exploration_probability = float(np.clip(exploration_probability, 0.0, 1.0))
 
+        self.text_encoder = TextEmbeddingService(prefer_gpu=prefer_gpu)
+        self.text_encoder.fit(self.builder.buyers, self.builder.exporters)
+        self.builder.set_text_encoder(self.text_encoder)
+        self.retriever = TwoTowerRetriever(
+            self.builder.buyers,
+            self.builder.exporters,
+            text_encoder=self.text_encoder,
+            prefer_gpu=prefer_gpu,
+        )
+
         self.interactions = pd.DataFrame(columns=["buyer_id", "exporter_id", "action", "ts"])
         self._updates_since_collab = 0
         self._updates_since_supervised = 0
         self._updates_since_ltr = 0
+        self._updates_since_retriever = 0
+        self.retrieval_refresh_every = 300
         self._buyer_swipe_counts: dict[str, int] = {}
         self._buyer_seen_exporters: dict[str, set[str]] = {}
         self.rng = np.random.default_rng(random_state)
@@ -81,13 +94,18 @@ class HybridRanker:
             interactions = pd.DataFrame(columns=["buyer_id", "exporter_id", "action", "ts"])
         self.interactions = self._sanitize_interactions(interactions).tail(self.max_interactions).reset_index(drop=True)
         self._rebuild_behavior_memory()
+        self.builder.update_interaction_stats(self.interactions)
+        self.retriever.fit(self.interactions)
+        self.builder.set_retrieval_scorer(self.retriever.score_pairs if self.retriever.ready else None)
+        self.builder.set_industry_assoc_lookup(self.retriever.industry_assoc_for_pair if self.retriever.ready else None)
         self.collaborative.fit(self.interactions)
         self.supervised.fit(self.interactions, self.builder)
         self.ltr.fit(self.interactions, self.builder)
         self._updates_since_supervised = 0
         self._updates_since_collab = 0
         self._updates_since_ltr = 0
-        self.is_trained = bool(self.supervised.ready or self.ltr.ready or self.collaborative.ready)
+        self._updates_since_retriever = 0
+        self.is_trained = bool(self.supervised.ready or self.ltr.ready or self.collaborative.ready or self.retriever.ready)
 
     def refresh_news(self, news: pd.DataFrame):
         self.builder.refresh_news(news)
@@ -96,11 +114,13 @@ class HybridRanker:
         if not self.is_trained:
             raise RuntimeError("Ranker is not trained. Train the model before requesting suggestions.")
         top_k = int(max(1, top_k))
-        feature_df, warning = self.builder.candidate_features_for_buyer(buyer_row)
+        buyer_id = as_text(buyer_row.get("Buyer_ID"))
+        retrieval_top = max(200, top_k * 25)
+        retrieval_candidates = self.retriever.retrieve_for_buyer(buyer_id, top_k=retrieval_top) if self.retriever.ready else None
+        feature_df, warning = self.builder.candidate_features_for_buyer(buyer_row, retrieval_candidates=retrieval_candidates)
         if feature_df.empty:
             return []
 
-        buyer_id = as_text(buyer_row.get("Buyer_ID"))
         seen_exporters = self._buyer_seen_exporters.get(buyer_id, set())
 
         model_p = self.supervised.predict_proba(feature_df)
@@ -139,12 +159,17 @@ class HybridRanker:
         for _, row in feature_df.iterrows():
             reasons = [
                 f"Industry fit: {round(safe_float(row.get('industry_similarity', row.get('industry_match', 0.0)), 0.0) * 100.0, 1)}",
+                f"Industry assoc: {round(safe_float(row.get('industry_assoc_score', 0.0), 0.0) * 100.0, 1)}",
                 f"Learned intent fit: {round(safe_float(row['intent_fit'], 0.0), 1)}",
                 f"Capacity fit: {round(safe_float(row['cap_fit'], 0.0), 1)}",
                 f"Trust pairing: {round(safe_float(row['pair_trust'], 0.0), 1)}",
+                f"Retriever score: {round(safe_float(row.get('retrieval_score', 0.5), 0.5) * 100.0, 1)}",
+                f"Text similarity: {round(safe_float(row.get('text_similarity', 0.5), 0.5) * 100.0, 1)}",
             ]
             if bool(row.get("is_exploration", False)):
                 reasons.append("Exploration pick: high-potential unseen exporter")
+            if as_text(row.get("candidate_source")) == "explore":
+                reasons.append("Diverse candidate from related industry cluster")
 
             card = {
                 "buyer_id": buyer_id,
@@ -161,15 +186,29 @@ class HybridRanker:
                 "industry_similarity": round(
                     safe_float(row.get("industry_similarity", row.get("industry_match", 0.0)), 0.0) * 100.0, 2
                 ),
+                "industry_assoc_score": round(safe_float(row.get("industry_assoc_score", 0.0), 0.0) * 100.0, 2),
+                "industry_assoc_hit": bool(safe_float(row.get("industry_assoc_hit", 0.0), 0.0) > 0.0),
                 "ml_score": round(safe_float(row["ml_score"], 0.0), 2),
                 "collab_score": round(safe_float(row["collab_score"], 0.0), 2),
                 "ltr_score": round(safe_float(row["ltr_score"], 0.0), 2),
+                "retrieval_score": round(safe_float(row.get("retrieval_score", 0.5), 0.5) * 100.0, 2),
+                "retrieval_rank_norm": round(safe_float(row.get("retrieval_rank_norm", 0.5), 0.5) * 100.0, 2),
+                "text_similarity": round(safe_float(row.get("text_similarity", 0.5), 0.5) * 100.0, 2),
                 "adaptive_collab_weight": round(safe_float(row["adaptive_collab_weight"], 0.0), 2),
                 "dynamic_match_weights": {
                     "cap_fit": round(safe_float(row.get("w_cap_fit", 0.0), 0.0), 4),
                     "intent": round(safe_float(row.get("w_intent", 0.0), 0.0), 4),
                     "comm": round(safe_float(row.get("w_comm", 0.0), 0.0), 4),
                 },
+                "behavioral_features": {
+                    "buyer_swipe_count_norm": round(safe_float(row.get("buyer_swipe_count_norm", 0.0), 0.0), 4),
+                    "buyer_right_rate": round(safe_float(row.get("buyer_right_rate", 0.5), 0.5), 4),
+                    "exporter_swipe_count_norm": round(safe_float(row.get("exporter_swipe_count_norm", 0.0), 0.0), 4),
+                    "exporter_right_rate": round(safe_float(row.get("exporter_right_rate", 0.5), 0.5), 4),
+                    "pair_interaction_count_norm": round(safe_float(row.get("pair_interaction_count_norm", 0.0), 0.0), 4),
+                    "pair_right_rate": round(safe_float(row.get("pair_right_rate", 0.5), 0.5), 4),
+                },
+                "candidate_source": as_text(row.get("candidate_source")) or "core",
                 "confidence": round(safe_float(row["confidence"], 0.0), 2),
                 "is_exploration": bool(row.get("is_exploration", False)),
                 "final_rank": round(safe_float(row["final_rank"], 0.0), 2),
@@ -202,11 +241,13 @@ class HybridRanker:
         self._updates_since_supervised += 1
         self._updates_since_collab += 1
         self._updates_since_ltr += 1
+        self._updates_since_retriever += 1
 
         self._buyer_swipe_counts[buyer_id] = int(self._buyer_swipe_counts.get(buyer_id, 0) + 1)
         if buyer_id not in self._buyer_seen_exporters:
             self._buyer_seen_exporters[buyer_id] = set()
         self._buyer_seen_exporters[buyer_id].add(exporter_id)
+        self.builder.ingest_interaction(buyer_id, exporter_id, action, row.iloc[0]["ts"])
 
         single_feature = self.builder.single_pair_features(buyer_id, exporter_id)
         did_online = self.supervised.update_single(single_feature, 1 if action == "right" else 0, sample_weight=1.0)
@@ -221,6 +262,12 @@ class HybridRanker:
         if self._updates_since_ltr >= self.ltr_refresh_every:
             self.ltr.fit(self.interactions, self.builder)
             self._updates_since_ltr = 0
+
+        if self._updates_since_retriever >= self.retrieval_refresh_every:
+            self.retriever.fit(self.interactions)
+            self.builder.set_retrieval_scorer(self.retriever.score_pairs if self.retriever.ready else None)
+            self.builder.set_industry_assoc_lookup(self.retriever.industry_assoc_for_pair if self.retriever.ready else None)
+            self._updates_since_retriever = 0
 
     def _sanitize_interactions(self, interactions: pd.DataFrame) -> pd.DataFrame:
         if interactions is None or interactions.empty:
@@ -286,7 +333,24 @@ class HybridRanker:
             return ranked.head(top_k)
 
         unseen_pool["bandit_score"] = 0.70 * (unseen_pool["ml_score"] / 100.0) + 0.30 * unseen_pool["uncertainty"]
-        explore_df = unseen_pool.nlargest(explore_slots, "bandit_score").copy()
+        source_col = unseen_pool.get("candidate_source")
+        if source_col is None:
+            diverse_pool = pd.DataFrame(columns=unseen_pool.columns)
+        else:
+            diverse_pool = unseen_pool[source_col.astype(str) == "explore"].copy()
+
+        if not diverse_pool.empty:
+            diverse_take = int(max(1, round(explore_slots * 0.6)))
+            diverse_take = min(diverse_take, explore_slots, len(diverse_pool))
+            explore_diverse = diverse_pool.nlargest(diverse_take, "bandit_score").copy()
+            remaining_slots = explore_slots - len(explore_diverse)
+            if remaining_slots > 0:
+                fillers = unseen_pool[~unseen_pool["exporter_id"].isin(explore_diverse["exporter_id"])]
+                explore_df = pd.concat([explore_diverse, fillers.nlargest(remaining_slots, "bandit_score")], ignore_index=True)
+            else:
+                explore_df = explore_diverse
+        else:
+            explore_df = unseen_pool.nlargest(explore_slots, "bandit_score").copy()
         explore_df["is_exploration"] = True
         explore_df["exploration_bonus"] = np.clip(
             explore_df["bandit_score"] * 100.0 - explore_df["final_rank"],

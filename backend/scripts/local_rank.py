@@ -103,18 +103,25 @@ def main():
         f"device: {ranker.ltr.device} | "
         f"ready: {ranker.ltr.ready}"
     )
+    print(
+        f"Retrieval backend: {ranker.retriever.backend or 'none'} | "
+        f"device: {ranker.retriever.device} | "
+        f"ready: {ranker.retriever.ready}"
+    )
+    print(f"Text encoder backend: {ranker.text_encoder.backend or 'none'} | ready: {ranker.text_encoder.ready}")
     if prefer_gpu and ranker.ltr.device != "gpu":
         print("GPU request was enabled, but LTR fell back to CPU on this machine.")
     if prefer_gpu and ranker.ltr.device == "gpu" and not CUPY_AVAILABLE:
         print("Note: install cupy for fully GPU-side prediction and to avoid XGBoost device-mismatch warnings.")
     if args.strict_gpu:
-        devices = [ranker.supervised.device, ranker.collaborative.device, ranker.ltr.device]
+        devices = [ranker.supervised.device, ranker.collaborative.device, ranker.ltr.device, ranker.retriever.device]
         if any(d != "gpu" for d in devices):
             raise RuntimeError(
                 "Strict GPU mode failed. Devices: "
                 f"supervised={ranker.supervised.device}, "
                 f"collaborative={ranker.collaborative.device}, "
-                f"ltr={ranker.ltr.device}"
+                f"ltr={ranker.ltr.device}, "
+                f"retrieval={ranker.retriever.device}"
             )
 
     row = buyers[buyers["Buyer_ID"].astype(str) == str(buyer_id)]

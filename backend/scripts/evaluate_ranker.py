@@ -6,7 +6,7 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import accuracy_score, roc_auc_score
+from sklearn.metrics import accuracy_score, balanced_accuracy_score, roc_auc_score
 
 
 def _project_root() -> str:
@@ -110,11 +110,20 @@ def _ndcg_at_k(rels: List[int], positives_total: int, k: int) -> float:
     return float(dcg / idcg)
 
 
-def _score_specific_pair(ranker, buyer_id: str, exporter_id: str) -> float | None:
+def _score_specific_pair(ranker, buyer_id: str, exporter_id: str, cache: Dict[str, pd.DataFrame] | None = None) -> float | None:
     if buyer_id not in ranker.builder.buyers_idx.index:
         return None
-    buyer_row = ranker.builder.buyers_idx.loc[buyer_id]
-    feature_df, _ = ranker.builder.candidate_features_for_buyer(buyer_row)
+    feature_df = None
+    if cache is not None:
+        feature_df = cache.get(str(buyer_id))
+    if feature_df is None:
+        buyer_row = ranker.builder.buyers_idx.loc[buyer_id]
+        retrieval_candidates = None
+        if getattr(ranker, "retriever", None) is not None and ranker.retriever.ready:
+            retrieval_candidates = ranker.retriever.retrieve_for_buyer(str(buyer_id), top_k=400)
+        feature_df, _ = ranker.builder.candidate_features_for_buyer(buyer_row, retrieval_candidates=retrieval_candidates)
+        if cache is not None:
+            cache[str(buyer_id)] = feature_df
     if feature_df.empty:
         return None
     row = feature_df[feature_df["exporter_id"].astype(str) == str(exporter_id)]
@@ -130,6 +139,38 @@ def _score_specific_pair(ranker, buyer_id: str, exporter_id: str) -> float | Non
     ltr_weight = float(ranker.ltr_weight if ranker.ltr.ready else 0.0)
     final_p = (1.0 - ltr_weight) * blend + ltr_weight * ltr_p
     return float(np.clip(final_p, 0.0, 1.0))
+
+
+def _collect_pair_scores(ranker, df: pd.DataFrame, max_rows: int = 5000) -> Tuple[List[int], List[float]]:
+    if df.empty:
+        return [], []
+    part = df
+    if len(part) > max_rows:
+        part = part.sample(max_rows, random_state=42)
+    y_true: List[int] = []
+    y_score: List[float] = []
+    cache: Dict[str, pd.DataFrame] = {}
+    for _, r in part.iterrows():
+        s = _score_specific_pair(ranker, str(r["buyer_id"]), str(r["exporter_id"]), cache=cache)
+        if s is None:
+            continue
+        y_true.append(1 if str(r["action"]).lower() == "right" else 0)
+        y_score.append(float(s))
+    return y_true, y_score
+
+
+def _find_best_threshold(y_true: List[int], y_score: List[float]) -> float:
+    if len(y_true) < 20 or len(set(y_true)) < 2:
+        return 0.5
+    best_thr = 0.5
+    best_metric = -1.0
+    for thr in np.linspace(0.25, 0.75, num=51):
+        y_pred = [1 if s >= float(thr) else 0 for s in y_score]
+        metric = float(balanced_accuracy_score(y_true, y_pred))
+        if metric > best_metric:
+            best_metric = metric
+            best_thr = float(thr)
+    return best_thr
 
 
 def main():
@@ -207,27 +248,27 @@ def main():
 
     ranking_df = pd.DataFrame(ranking_rows)
 
-    y_true: List[int] = []
-    y_score: List[float] = []
-    for _, r in test_df.iterrows():
-        s = _score_specific_pair(ranker, str(r["buyer_id"]), str(r["exporter_id"]))
-        if s is None:
-            continue
-        y_true.append(1 if str(r["action"]).lower() == "right" else 0)
-        y_score.append(float(s))
+    train_y_true, train_y_score = _collect_pair_scores(ranker, train_df, max_rows=3000)
+    best_threshold = _find_best_threshold(train_y_true, train_y_score)
+
+    y_true, y_score = _collect_pair_scores(ranker, test_df, max_rows=8000)
 
     classification_metrics = {}
     if len(y_true) >= 2 and len(set(y_true)) == 2:
-        y_pred = [1 if s >= 0.5 else 0 for s in y_score]
+        y_pred = [1 if s >= best_threshold else 0 for s in y_score]
         classification_metrics = {
             "accuracy": float(accuracy_score(y_true, y_pred)),
+            "balanced_accuracy": float(balanced_accuracy_score(y_true, y_pred)),
             "auc": float(roc_auc_score(y_true, y_score)),
+            "threshold": float(best_threshold),
             "n_eval_pairs": int(len(y_true)),
         }
     else:
         classification_metrics = {
             "accuracy": None,
+            "balanced_accuracy": None,
             "auc": None,
+            "threshold": float(best_threshold),
             "n_eval_pairs": int(len(y_true)),
         }
 
@@ -241,6 +282,8 @@ def main():
             "supervised": {"backend": ranker.supervised.backend, "device": ranker.supervised.device},
             "collaborative": {"backend": "svd", "device": ranker.collaborative.device, "ready": ranker.collaborative.ready},
             "ltr": {"backend": ranker.ltr.backend, "device": ranker.ltr.device},
+            "retrieval": {"backend": ranker.retriever.backend, "device": ranker.retriever.device, "ready": ranker.retriever.ready},
+            "text_encoder": {"backend": ranker.text_encoder.backend, "ready": ranker.text_encoder.ready},
         },
         "ranking_metrics": {
             "k": int(top_k),
