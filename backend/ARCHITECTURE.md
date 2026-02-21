@@ -8,6 +8,8 @@ Provide a modular, maintainable backend for buyer-exporter matching with clear s
 - online learning
 - API/transport layer
 
+For setup/training/evaluation commands on a new machine, see `backend/QUICKSTART_COMMANDS.md`.
+
 ## Package Layout
 
 ### `app/main.py`
