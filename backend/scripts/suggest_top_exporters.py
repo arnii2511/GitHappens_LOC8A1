@@ -3,7 +3,6 @@ import json
 import os
 import pickle
 import sys
-
 import pandas as pd
 
 
@@ -33,6 +32,7 @@ def main():
 
     root = _project_root()
     sys.path.insert(0, root)
+    from app.ml.model_explainer import ModelExplainer
 
     model_path = _resolve_path(root, args.model_in)
     if not os.path.exists(model_path):
@@ -51,9 +51,21 @@ def main():
         raise ValueError(f"Buyer_ID '{buyer_id}' not found in trained model. Sample IDs: {sample}")
 
     cards = ranker.rank_for_buyer(row.iloc[0], top_k=max(1, int(args.top_k)))
+
     if not cards:
         print("No exporters found for this buyer.")
         return
+
+    explainer = ModelExplainer(ranker.supervised)
+
+    feature_df, _ = ranker.builder.candidate_features_for_buyer(row.iloc[0])
+
+    for i, card in enumerate(cards):
+        if i < len(feature_df):
+            feature_row = feature_df.iloc[i]
+            proba = card["ml_score"] / 100.0
+            explanation = explainer.explain_prediction(feature_row, proba)
+            card["model_explanation"] = explanation
 
     preview_cols = [
         "exporter_id",
@@ -70,6 +82,28 @@ def main():
     preview = pd.DataFrame(cards)[preview_cols]
     print(preview.to_string(index=False))
 
+    print("\n================ EXPLANATION PREVIEW ================\n")
+
+    for card in cards[:3]:  # show first 3 exporters only
+        print(f"Exporter: {card['exporter_id']}")
+        print(f"Final Rank: {card['final_rank']}")
+        print(f"Confidence: {card['confidence']}")
+    
+        explanation = card.get("model_explanation", {})
+    
+        print("Model Type:", explanation.get("model_type"))
+        print("Prediction Direction:", explanation.get("prediction_direction"))
+        print("Summary:", explanation.get("summary"))
+    
+        print("Top Drivers:")
+        if "top_positive_drivers" in explanation:
+            print("  Positive:", explanation["top_positive_drivers"][:2])
+        if "top_negative_drivers" in explanation:
+            print("  Negative:", explanation["top_negative_drivers"][:2])
+        if "top_important_features" in explanation:
+            print("  Important:", explanation["top_important_features"][:3])
+
+        print("--------------------------------------------------")
     if args.out_json:
         out_json = _resolve_path(root, args.out_json)
         out_dir = os.path.dirname(out_json)
