@@ -8,7 +8,6 @@ import pandas as pd
 from .db import init_db, insert_swipe, log_update, fetch_swipes
 from .ml import HybridRanker
 from .pipeline import (
-    build_feed_for_buyer,
     engineer_buyer_features,
     engineer_exporter_features,
     load_data_clean,
@@ -89,10 +88,11 @@ def feed(buyer_id: str, limit: int = 10):
     if row.empty:
         raise HTTPException(404, "Buyer not found")
 
-    if ranker is not None:
-        cards = ranker.rank_for_buyer(row.iloc[0], top_k=limit)
-    else:
-        cards = build_feed_for_buyer(row.iloc[0], e, n, top_k=limit)
+    if ranker is None:
+        raise HTTPException(503, "Ranker unavailable. Train the model before requesting feed.")
+    if not ranker.is_trained:
+        raise HTTPException(503, "Ranker not trained. Train first, then request feed.")
+    cards = ranker.rank_for_buyer(row.iloc[0], top_k=limit)
     return jsonable_encoder({"buyer_id": buyer_id, "cards": cards})
 
 class SwipeIn(BaseModel):

@@ -30,6 +30,10 @@ Provide a modular, maintainable backend for buyer-exporter matching with clear s
 - `feature_builder.py`: pairwise candidate feature construction.
 - `supervised.py`: online supervised ranking model.
 - `collaborative.py`: interaction embedding model (SVD).
+- `ltr.py`: learning-to-rank model (LightGBM/XGBoost with fallback).
+  - Tries GPU first when enabled, then safely falls back to CPU.
+- `time_decay.py`: recency weighting for interactions.
+ - Full end-to-end GPU requires CUDA-enabled XGBoost and CuPy (for collaborative SVD + GPU-side prediction input).
 - `hybrid_ranker.py`: orchestrates supervised + collaborative blend.
 - `constants.py`: shared ML feature column contract.
 - `common.py`: shared ML utility functions and sklearn/scipy availability.
@@ -44,6 +48,9 @@ Provide a modular, maintainable backend for buyer-exporter matching with clear s
 3. Hybrid model trains:
 - supervised learner from interactions (or bootstrap labels)
 - collaborative SVD embeddings from swipe matrix
-4. `/feed` builds candidate features, scores via hybrid model, returns ranked cards.
-5. `/swipe` persists action and updates model online.
-6. `/simulate/update` mutates news and refreshes ranker risk cache.
+- learning-to-rank model for final ordering refinement
+4. Scores are blended with adaptive collaborative weight based on per-buyer interaction depth.
+5. Contextual exploration injects high-potential unseen exporters into top results occasionally.
+6. `/feed` builds candidate features, scores via hybrid model, returns ranked cards.
+7. `/swipe` persists action and updates model online.
+8. `/simulate/update` mutates news and refreshes ranker risk cache.

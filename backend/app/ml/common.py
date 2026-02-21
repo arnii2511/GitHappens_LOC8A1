@@ -15,6 +15,31 @@ except Exception:
     StandardScaler = None
     SKLEARN_AVAILABLE = False
 
+try:
+    from lightgbm import LGBMRanker
+
+    LIGHTGBM_AVAILABLE = True
+except Exception:
+    LGBMRanker = None
+    LIGHTGBM_AVAILABLE = False
+
+try:
+    from xgboost import XGBClassifier, XGBRanker
+
+    XGBOOST_AVAILABLE = True
+except Exception:
+    XGBClassifier = None
+    XGBRanker = None
+    XGBOOST_AVAILABLE = False
+
+try:
+    import cupy as cp
+
+    CUPY_AVAILABLE = True
+except Exception:
+    cp = None
+    CUPY_AVAILABLE = False
+
 
 def as_text(value) -> str:
     if value is None:
