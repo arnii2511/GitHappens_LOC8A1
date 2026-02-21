@@ -1,0 +1,17 @@
+FEATURE_COLUMNS = [
+    "industry_match",
+    "cap_fit",
+    "intent_fit",
+    "pair_trust",
+    "min_intent",
+    "buyer_intent",
+    "exporter_intent",
+    "comm_score",
+    "news_risk_penalty",
+    "exporter_risk_penalty",
+    "total_risk_penalty",
+    "shock_score",
+    "match_after_risk",
+    "buyer_trust",
+    "exporter_trust",
+]

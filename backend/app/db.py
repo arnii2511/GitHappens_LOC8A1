@@ -2,6 +2,7 @@ import os
 import psycopg2
 from psycopg2.extras import Json
 from dotenv import load_dotenv
+import pandas as pd
 
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -58,3 +59,23 @@ def log_update(update_type: str, payload: dict):
     conn.commit()
     cur.close()
     conn.close()
+
+
+def fetch_swipes(limit: int = 250_000) -> pd.DataFrame:
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT buyer_id, exporter_id, action, ts
+        FROM swipes
+        ORDER BY ts DESC
+        LIMIT %s
+        """,
+        (int(max(1, limit)),),
+    )
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    if not rows:
+        return pd.DataFrame(columns=["buyer_id", "exporter_id", "action", "ts"])
+    return pd.DataFrame(rows, columns=["buyer_id", "exporter_id", "action", "ts"])
