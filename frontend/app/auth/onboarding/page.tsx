@@ -159,11 +159,17 @@ export default function OnboardingPage() {
       setUserId(user.id)
 
       // Check if already completed onboarding
-      const { data: existingProfile } = await supabase
+      const { data: existingProfile, error: profileCheckError } = await supabase
         .from('profiles')
         .select('onboarding_completed')
         .eq('id', user.id)
-        .single()
+        .maybeSingle()
+
+      if (profileCheckError) {
+        setError(profileCheckError.message)
+        setInitializing(false)
+        return
+      }
 
       if (existingProfile?.onboarding_completed) {
         router.replace('/')
@@ -208,20 +214,7 @@ export default function OnboardingPage() {
     try {
       const supabase = createClient()
 
-      // Step 1: Update profile
-      const { error: profileErr } = await supabase
-        .from('profiles')
-        .update({
-          account_type: profile.accountType,
-          full_name: profile.fullName,
-          phone: profile.phone,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', userId)
-
-      if (profileErr) throw profileErr
-
-      // Step 2: Create or update organization
+      // Step 1: Create or update organization
       const { data: orgData, error: orgErr } = await supabase
         .from('organizations')
         .upsert({
@@ -242,7 +235,7 @@ export default function OnboardingPage() {
 
       if (orgErr) throw orgErr
 
-      // Step 3: Create or update trade info
+      // Step 2: Create or update trade info
       const { error: tradeErr } = await supabase.from('trade_info').upsert({
         user_id: userId,
         product_categories: trade.productCategories,
@@ -256,7 +249,7 @@ export default function OnboardingPage() {
 
       if (tradeErr) throw tradeErr
 
-      // Step 4: Upload KYC documents
+      // Step 3: Upload KYC documents
       const validFiles = files.filter((f) => f.status !== 'error')
       for (const f of validFiles) {
         const filePath = `${userId}/${Date.now()}-${f.name}`
@@ -279,16 +272,17 @@ export default function OnboardingPage() {
         })
       }
 
-      // Mark onboarding as complete
+      // Mark onboarding as complete and persist profile fields in one write
       const { error: completeErr } = await supabase
         .from('profiles')
-        .update({
-  onboarding_completed: true,
-  onboarding_completed_at: new Date().toISOString(),
-  updated_at: new Date().toISOString(),
-})
-
-        .eq('id', userId)
+        .upsert({
+          id: userId,
+          account_type: profile.accountType,
+          full_name: profile.fullName,
+          phone: profile.phone,
+          onboarding_completed: true,
+          updated_at: new Date().toISOString(),
+        })
 
       if (completeErr) throw completeErr
 

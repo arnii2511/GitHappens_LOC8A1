@@ -38,11 +38,30 @@ export default function LoginPage() {
       // Check if onboarding is complete
       const { data: { user } } = await supabase.auth.getUser()
       if (user) {
-        const { data: profile } = await supabase
+        const { data: profile, error: profileError } = await supabase
           .from('profiles')
           .select('onboarding_completed')
           .eq('id', user.id)
-          .single()
+          .maybeSingle()
+
+        if (profileError) {
+          setError(profileError.message)
+          setLoading(false)
+          return
+        }
+
+        if (!profile) {
+          const { error: createProfileError } = await supabase.from('profiles').upsert({
+            id: user.id,
+            onboarding_completed: false,
+            updated_at: new Date().toISOString(),
+          })
+          if (createProfileError) {
+            setError(createProfileError.message)
+            setLoading(false)
+            return
+          }
+        }
 
         if (profile?.onboarding_completed) {
           router.push('/')
