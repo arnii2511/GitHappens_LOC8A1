@@ -1,19 +1,33 @@
+# Python
 .venv/
-/app/__pycache__/
-/app/.pytest_cache/
-build/
-dist/
-*.egg-info/
-.vscode/
-*.log
-.DS_Store
-.env
-.env.*
-.idea/
-*.iml 
-.ipynb_checkpoints/ 
-coverage/
-htmlcov/
+app/__pycache__/
+app/.pytest_cache/
 *.pyc
 *.pyo
 *.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Environment
+.env
+.env.*
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.iml
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Coverage
+coverage/
+htmlcov/
+
+# Next.js
+node_modules/
+.next/
+out/
