@@ -367,6 +367,7 @@ class PairFeatureBuilder:
         exporter_intent = as_float_series(exporters, "exporter_intent", 0.0)
         exporter_state = exporters["State"].astype(str).to_numpy() if "State" in exporters.columns else np.array([""] * len(exporters))
         exporter_cert = exporters["Certification"].astype(str).to_numpy() if "Certification" in exporters.columns else np.array([""] * len(exporters))
+        exporter_industry = exporters["Industry"].astype(str).to_numpy() if "Industry" in exporters.columns else np.array([""] * len(exporters))
         industry_sim = as_float_series(exporters, "industry_sim", 0.0)
 
         cap_fit = self._vector_capacity_fit(exporter_qty, buyer_avg)
@@ -460,6 +461,7 @@ class PairFeatureBuilder:
                 "exporter_id": np.array(exporter_ids, dtype=object),
                 "exporter_state": exporter_state,
                 "exporter_cert": exporter_cert,
+                "exporter_industry": exporter_industry,
                 "industry": industry,
                 "candidate_source": candidate_source,
                 "industry_match": industry_sim,

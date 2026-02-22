@@ -176,6 +176,7 @@ class HybridRanker:
                 "exporter_id": row["exporter_id"],
                 "exporter_state": row["exporter_state"],
                 "exporter_cert": row["exporter_cert"],
+                "exporter_industry": row.get("exporter_industry", ""),
                 "match_score": round(safe_float(row["match_after_risk"], 0.0), 2),
                 "trust_score": round(safe_float(row["pair_trust"], 0.0), 2),
                 "intent_score": round(safe_float(row["min_intent"], 0.0), 2),
