@@ -88,11 +88,29 @@ class ModelExplainer:
         if model is None:
             return self._explain_fallback(row, proba)
 
-        importance = model.feature_importances_
-        feature_contrib = list(zip(FEATURE_COLUMNS, importance))
-        feature_contrib.sort(key=lambda x: abs(x[1]), reverse=True)
+        # Prefer local (row-level) contributions when booster supports pred_contribs.
+        top_pos = []
+        top_neg = []
+        top_features = []
+        try:
+            import xgboost as xgb  # local import to avoid hard dependency at module load
 
-        top_features = [(f, float(c)) for f, c in feature_contrib[:5]]
+            x = row[FEATURE_COLUMNS].to_numpy(dtype=np.float64).reshape(1, -1)
+            booster = model.get_booster()
+            dm = xgb.DMatrix(x, feature_names=FEATURE_COLUMNS)
+            contrib = np.asarray(booster.predict(dm, pred_contribs=True), dtype=np.float64).reshape(-1)
+            # Last term is bias; ignore for feature driver list.
+            feat_contrib = contrib[: len(FEATURE_COLUMNS)]
+            pairs = list(zip(FEATURE_COLUMNS, feat_contrib))
+            pairs.sort(key=lambda t: abs(float(t[1])), reverse=True)
+            top_features = [(f, float(c)) for f, c in pairs[:6]]
+            top_pos = [(f, float(c)) for f, c in pairs if c > 0][:5]
+            top_neg = [(f, float(c)) for f, c in pairs if c < 0][:5]
+        except Exception:
+            importance = np.asarray(getattr(model, "feature_importances_", np.zeros(len(FEATURE_COLUMNS))), dtype=np.float64)
+            pairs = list(zip(FEATURE_COLUMNS, importance))
+            pairs.sort(key=lambda x: abs(float(x[1])), reverse=True)
+            top_features = [(f, float(c)) for f, c in pairs[:5]]
 
         direction = "High" if proba >= 0.5 else "Low"
 
@@ -101,7 +119,9 @@ class ModelExplainer:
             "prediction_probability": float(proba),
             "prediction_direction": direction,
             "top_important_features": top_features,
-            "summary": f"Prediction driven primarily by: {', '.join([f for f, _ in top_features])}.",
+            "top_positive_drivers": top_pos,
+            "top_negative_drivers": top_neg,
+            "summary": f"Prediction driven primarily by: {', '.join([f for f, _ in top_features[:4]])}.",
         }
 
     # ================================================================

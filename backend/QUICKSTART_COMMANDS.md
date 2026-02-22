@@ -109,3 +109,29 @@ python backend\scripts\suggest_top_exporters.py --top-k 10 --model-in models/ran
 ```bash
 python backend\scripts\profile_dataset.py --swipes-csv backend/data/labels/swipes_labeled.csv
 ```
+
+## 9. Single-command retrain cycle (recommended for periodic updates)
+
+First time (auto-generate imitation labels if empty, then train + evaluate + rebuild crossed features):
+
+```bash
+python backend\scripts\retrain_cycle.py --gpu --generate-if-empty --model-out models/ranker.pkl --metrics-out data/metrics/latest_metrics.json
+```
+
+When new swipe data arrives (append and retrain):
+
+```bash
+python backend\scripts\retrain_cycle.py --gpu --new-swipes-csv data/labels/new_swipes_batch.csv --model-out models/ranker.pkl --metrics-out data/metrics/latest_metrics.json
+```
+
+Use previously built crossed features during retrain (recommended):
+
+```bash
+python backend\scripts\retrain_cycle.py --gpu --new-swipes-csv data/labels/new_swipes_batch.csv --crossed-train-csv data/labels/cross_swipes_features.csv --model-out models/ranker.pkl --metrics-out data/metrics/latest_metrics.json
+```
+
+Optional: include a buyer id to immediately print latest top-K suggestions after retrain:
+
+```bash
+python backend\scripts\retrain_cycle.py --gpu --new-swipes-csv data/labels/new_swipes_batch.csv --buyer-id BUY_69687 --top-k 10
+```

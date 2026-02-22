@@ -40,12 +40,82 @@ class PairFeatureBuilder:
         self._buyer_hist_raw: dict[str, dict[str, object]] = {}
         self._exporter_hist_raw: dict[str, dict[str, object]] = {}
         self._pair_hist_raw: dict[tuple[str, str], dict[str, object]] = {}
+        self._buyer_recent_right_rate: dict[str, float] = {}
+        self._buyer_recent_actions: dict[str, list[float]] = {}
+        self._buyer_avg_dwell_norm: dict[str, float] = {}
+        self._exporter_avg_dwell_norm: dict[str, float] = {}
+        self._pair_avg_dwell_norm: dict[tuple[str, str], float] = {}
+        self._pair_last_shown_rank_norm: dict[tuple[str, str], float] = {}
         self._max_buyer_count = 1.0
         self._max_exporter_count = 1.0
         self._max_pair_count = 1.0
         self.text_encoder = None
         self.retrieval_scorer = None
         self.industry_assoc_lookup = None
+        self.graph_scorer = None
+        self.teacher_enabled = True
+
+    def _extract_hs_tokens(self, value: object) -> set[str]:
+        if value is None:
+            return set()
+        text = as_text(value).lower()
+        if text == "":
+            return set()
+        for ch in ["/", "|", ";", ":", "-", "_"]:
+            text = text.replace(ch, ",")
+        tokens: set[str] = set()
+        for part in text.split(","):
+            p = part.strip()
+            if p == "":
+                continue
+            digits = "".join([c for c in p if c.isdigit()])
+            if len(digits) >= 4:
+                tokens.add(digits[:8])
+        return tokens
+
+    def _row_hs_tokens(self, row: pd.Series, is_buyer: bool) -> set[str]:
+        if is_buyer:
+            cols = [
+                "HS_Code",
+                "HS_Codes",
+                "Buyer_HS_Code",
+                "Buyer_HS_Codes",
+                "Product_Code",
+                "Product_Codes",
+            ]
+        else:
+            cols = [
+                "HS_Code",
+                "HS_Codes",
+                "Exporter_HS_Code",
+                "Exporter_HS_Codes",
+                "Product_Code",
+                "Product_Codes",
+            ]
+        out: set[str] = set()
+        for c in cols:
+            if c in row.index:
+                out |= self._extract_hs_tokens(row.get(c))
+        return out
+
+    def _hs_match_score(self, buyer_tokens: set[str], exporter_tokens: set[str], industry_sim: float) -> float:
+        if buyer_tokens and exporter_tokens:
+            inter = len(buyer_tokens & exporter_tokens)
+            uni = len(buyer_tokens | exporter_tokens)
+            if uni > 0:
+                return float(np.clip(inter / uni, 0.0, 1.0))
+            return 0.0
+        # Fallback when HS is missing in data: keep weak prior from industry only.
+        return float(np.clip(0.30 * industry_sim, 0.0, 1.0))
+
+    def _country_complement_score(self, buyer_country: str, exporter_country: str = "india") -> float:
+        b = as_text(buyer_country).strip().lower()
+        e = as_text(exporter_country).strip().lower()
+        if b == "" or e == "":
+            return 0.5
+        if b == e:
+            return 0.35
+        return 1.0
 
     def refresh_news(self, news: pd.DataFrame):
         self.news = news.copy()
@@ -60,10 +130,22 @@ class PairFeatureBuilder:
     def set_industry_assoc_lookup(self, industry_assoc_lookup) -> None:
         self.industry_assoc_lookup = industry_assoc_lookup
 
+    def set_graph_scorer(self, graph_scorer) -> None:
+        self.graph_scorer = graph_scorer
+
+    def set_teacher_enabled(self, enabled: bool) -> None:
+        self.teacher_enabled = bool(enabled)
+
     def update_interaction_stats(self, interactions: pd.DataFrame):
         self._buyer_hist_raw = {}
         self._exporter_hist_raw = {}
         self._pair_hist_raw = {}
+        self._buyer_recent_right_rate = {}
+        self._buyer_recent_actions = {}
+        self._buyer_avg_dwell_norm = {}
+        self._exporter_avg_dwell_norm = {}
+        self._pair_avg_dwell_norm = {}
+        self._pair_last_shown_rank_norm = {}
         self._max_buyer_count = 1.0
         self._max_exporter_count = 1.0
         self._max_pair_count = 1.0
@@ -78,11 +160,20 @@ class PairFeatureBuilder:
                 return
         if "ts" not in df.columns:
             df["ts"] = pd.Timestamp.now(tz="UTC")
+        if "shown_rank" not in df.columns:
+            df["shown_rank"] = np.nan
+        if "source" not in df.columns:
+            df["source"] = "unknown"
+        if "dwell_ms" not in df.columns:
+            df["dwell_ms"] = np.nan
 
         df["buyer_id"] = df["buyer_id"].astype(str).str.strip()
         df["exporter_id"] = df["exporter_id"].astype(str).str.strip()
         df["action"] = df["action"].astype(str).str.strip().str.lower()
         df["ts"] = pd.to_datetime(df["ts"], errors="coerce", utc=True)
+        df["shown_rank"] = pd.to_numeric(df["shown_rank"], errors="coerce")
+        df["source"] = df["source"].astype(str).str.strip().str.lower()
+        df["dwell_ms"] = pd.to_numeric(df["dwell_ms"], errors="coerce")
         df = df[df["action"].isin(["left", "right"])]
         df = df[(df["buyer_id"] != "") & (df["exporter_id"] != "")]
         df = df.dropna(subset=["ts"])
@@ -106,6 +197,17 @@ class PairFeatureBuilder:
         if not buyer_grp.empty:
             self._max_buyer_count = float(max(1.0, buyer_grp["count"].max()))
 
+        for buyer_id, grp in df.groupby("buyer_id", sort=False):
+            actions = grp.sort_values("ts")["action"].eq("right").astype(np.float64).tail(20).tolist()
+            if not actions:
+                continue
+            bid = str(buyer_id)
+            self._buyer_recent_actions[bid] = list(actions)
+            self._buyer_recent_right_rate[bid] = float(np.mean(actions))
+            dwell = pd.to_numeric(grp["dwell_ms"], errors="coerce").dropna()
+            if not dwell.empty:
+                self._buyer_avg_dwell_norm[bid] = self._norm_dwell_ms(float(dwell.mean()))
+
         exporter_grp = (
             df.groupby("exporter_id", sort=False)
             .agg(count=("action", "size"), right_sum=("right", "sum"), last_ts=("ts", "max"))
@@ -119,6 +221,11 @@ class PairFeatureBuilder:
             }
         if not exporter_grp.empty:
             self._max_exporter_count = float(max(1.0, exporter_grp["count"].max()))
+
+        for exporter_id, grp in df.groupby("exporter_id", sort=False):
+            dwell = pd.to_numeric(grp["dwell_ms"], errors="coerce").dropna()
+            if not dwell.empty:
+                self._exporter_avg_dwell_norm[str(exporter_id)] = self._norm_dwell_ms(float(dwell.mean()))
 
         pair_grp = (
             df.groupby(["buyer_id", "exporter_id"], sort=False)
@@ -134,7 +241,27 @@ class PairFeatureBuilder:
         if not pair_grp.empty:
             self._max_pair_count = float(max(1.0, pair_grp["count"].max()))
 
-    def ingest_interaction(self, buyer_id: str, exporter_id: str, action: str, ts) -> None:
+        for (buyer_id, exporter_id), grp in df.groupby(["buyer_id", "exporter_id"], sort=False):
+            key = (str(buyer_id), str(exporter_id))
+            dwell = pd.to_numeric(grp["dwell_ms"], errors="coerce").dropna()
+            if not dwell.empty:
+                self._pair_avg_dwell_norm[key] = self._norm_dwell_ms(float(dwell.mean()))
+            ranks = pd.to_numeric(grp.sort_values("ts")["shown_rank"], errors="coerce").dropna()
+            if not ranks.empty:
+                self._pair_last_shown_rank_norm[key] = self._norm_rank(float(ranks.iloc[-1]))
+
+    def ingest_interaction(
+        self,
+        buyer_id: str,
+        exporter_id: str,
+        action: str,
+        ts,
+        *,
+        shown_rank=None,
+        source: str | None = None,
+        dwell_ms=None,
+        session_id: str | None = None,
+    ) -> None:
         buyer_id = as_text(buyer_id)
         exporter_id = as_text(exporter_id)
         action = as_text(action).lower()
@@ -169,6 +296,33 @@ class PairFeatureBuilder:
         p["last_ts"] = max(pd.to_datetime(p["last_ts"], utc=True), ts)
         self._pair_hist_raw[pair_key] = p
         self._max_pair_count = float(max(self._max_pair_count, float(p["count"])))
+
+        recent = list(self._buyer_recent_actions.get(buyer_id, []))
+        recent.append(1.0 if action == "right" else 0.0)
+        if len(recent) > 20:
+            recent = recent[-20:]
+        self._buyer_recent_actions[buyer_id] = recent
+        self._buyer_recent_right_rate[buyer_id] = float(np.mean(recent)) if recent else 0.5
+
+        dwell = safe_float(dwell_ms, np.nan)
+        if np.isfinite(dwell) and dwell >= 0.0:
+            dwell_n = self._norm_dwell_ms(dwell)
+            prev_b = self._buyer_avg_dwell_norm.get(buyer_id)
+            self._buyer_avg_dwell_norm[buyer_id] = dwell_n if prev_b is None else float(0.85 * prev_b + 0.15 * dwell_n)
+
+            prev_e = self._exporter_avg_dwell_norm.get(exporter_id)
+            self._exporter_avg_dwell_norm[exporter_id] = (
+                dwell_n if prev_e is None else float(0.85 * prev_e + 0.15 * dwell_n)
+            )
+
+            prev_pair = self._pair_avg_dwell_norm.get(pair_key)
+            self._pair_avg_dwell_norm[pair_key] = (
+                dwell_n if prev_pair is None else float(0.80 * prev_pair + 0.20 * dwell_n)
+            )
+
+        shown_rank_val = safe_float(shown_rank, np.nan)
+        if np.isfinite(shown_rank_val) and shown_rank_val > 0:
+            self._pair_last_shown_rank_norm[pair_key] = self._norm_rank(shown_rank_val)
 
     def _prepare_buyers(self, buyers: pd.DataFrame) -> pd.DataFrame:
         df = buyers.copy()
@@ -246,6 +400,17 @@ class PairFeatureBuilder:
             return 1.0
         return float(np.clip(days / 180.0, 0.0, 1.0))
 
+    def _norm_dwell_ms(self, dwell_ms: float) -> float:
+        if not np.isfinite(dwell_ms) or dwell_ms <= 0.0:
+            return 0.0
+        return float(np.clip(dwell_ms / 15000.0, 0.0, 1.0))
+
+    def _norm_rank(self, shown_rank: float) -> float:
+        if not np.isfinite(shown_rank) or shown_rank <= 0.0:
+            return 0.5
+        capped = min(float(shown_rank), 50.0)
+        return float(np.clip(1.0 - ((capped - 1.0) / 49.0), 0.0, 1.0))
+
     def _stat_to_features(self, stat: Optional[dict], max_count: float, default_right_rate: float = 0.5) -> tuple[float, float, float]:
         if not stat:
             return 0.0, float(default_right_rate), 1.0
@@ -318,6 +483,8 @@ class PairFeatureBuilder:
 
         buyer_id = as_text(buyer_row.get("Buyer_ID"))
         buyer_avg = safe_float(buyer_row.get("Avg_Order_Tons", np.nan), np.nan)
+        buyer_country = as_text(buyer_row.get("Country", ""))
+        buyer_hs_tokens = self._row_hs_tokens(buyer_row, is_buyer=True)
         buyer_trust = safe_float(buyer_row.get("buyer_trust", 0.0), 0.0)
         buyer_intent = safe_float(buyer_row.get("buyer_intent", 0.0), 0.0)
         ref_date = buyer_row.get("Date", pd.NaT)
@@ -367,8 +534,16 @@ class PairFeatureBuilder:
         exporter_intent = as_float_series(exporters, "exporter_intent", 0.0)
         exporter_state = exporters["State"].astype(str).to_numpy() if "State" in exporters.columns else np.array([""] * len(exporters))
         exporter_cert = exporters["Certification"].astype(str).to_numpy() if "Certification" in exporters.columns else np.array([""] * len(exporters))
-        exporter_industry = exporters["Industry"].astype(str).to_numpy() if "Industry" in exporters.columns else np.array([""] * len(exporters))
         industry_sim = as_float_series(exporters, "industry_sim", 0.0)
+        hs_match = np.zeros(len(exporters), dtype=np.float64)
+        country_comp = np.full(
+            len(exporters),
+            self._country_complement_score(buyer_country, "india"),
+            dtype=np.float64,
+        )
+        for i, (_, ex_row) in enumerate(exporters.iterrows()):
+            ex_hs_tokens = self._row_hs_tokens(ex_row, is_buyer=False)
+            hs_match[i] = self._hs_match_score(buyer_hs_tokens, ex_hs_tokens, float(industry_sim.iloc[i] if hasattr(industry_sim, "iloc") else industry_sim[i]))
 
         cap_fit = self._vector_capacity_fit(exporter_qty, buyer_avg)
         intent_fit = (buyer_intent / 100.0) * (exporter_intent / 100.0) * 100.0
@@ -381,15 +556,22 @@ class PairFeatureBuilder:
             + 0.15 * as_float_series(exporters, "Natural_Calamity_Risk", 0.0)
             + 0.10 * np.abs(as_float_series(exporters, "Currency_Shift", 0.0))
         )
-        ex_risk_penalty = np.minimum(20.0, 20.0 * ex_risk)
-        total_penalty = np.minimum(30.0, news_penalty + ex_risk_penalty)
+        # Calibrated risk: keep bounded and nonlinear so risk does not
+        # dominate every ranking when moderate.
+        ex_risk_penalty = np.minimum(10.0, 10.0 * np.power(np.clip(ex_risk, 0.0, 1.0), 1.4))
+        news_penalty_cal = float(np.minimum(10.0, 10.0 * np.power(np.clip(news_penalty / 30.0, 0.0, 1.0), 1.4)))
+        total_penalty = np.minimum(10.0, news_penalty_cal + ex_risk_penalty)
 
         non_industry_match = (
             w_match["cap_fit"] * cap_fit
             + w_match["intent"] * intent_fit
             + w_match["comm"] * comm_score
         )
-        base_match = 0.80 * non_industry_match + 0.20 * (industry_sim * 100.0)
+        base_match = (
+            0.70 * non_industry_match
+            + 0.20 * (industry_sim * 100.0)
+            + 0.10 * (hs_match * 100.0)
+        )
         match_after_risk = np.clip(base_match - total_penalty, 0.0, 100.0)
 
         buyer_count_n, buyer_right_rate, buyer_days_n = self._stat_to_features(
@@ -397,12 +579,17 @@ class PairFeatureBuilder:
             self._max_buyer_count,
             default_right_rate=0.5,
         )
+        buyer_recent_right_rate = float(self._buyer_recent_right_rate.get(buyer_id, buyer_right_rate))
+        buyer_avg_dwell_norm = float(self._buyer_avg_dwell_norm.get(buyer_id, 0.0))
         exporter_count_n = np.zeros(len(exporters), dtype=np.float64)
         exporter_right_rate = np.full(len(exporters), 0.5, dtype=np.float64)
         exporter_days_n = np.ones(len(exporters), dtype=np.float64)
+        exporter_avg_dwell_norm = np.zeros(len(exporters), dtype=np.float64)
         pair_count_n = np.zeros(len(exporters), dtype=np.float64)
         pair_right_rate = np.full(len(exporters), buyer_right_rate, dtype=np.float64)
         pair_days_n = np.ones(len(exporters), dtype=np.float64)
+        pair_avg_dwell_norm = np.zeros(len(exporters), dtype=np.float64)
+        pair_last_shown_rank_norm = np.full(len(exporters), 0.5, dtype=np.float64)
 
         exporter_ids = exporters["Exporter_ID"].astype(str).tolist()
         for i, ex_id in enumerate(exporter_ids):
@@ -414,6 +601,7 @@ class PairFeatureBuilder:
             exporter_count_n[i] = e_count_n
             exporter_right_rate[i] = e_right_rate
             exporter_days_n[i] = e_days_n
+            exporter_avg_dwell_norm[i] = float(self._exporter_avg_dwell_norm.get(ex_id, 0.0))
 
             p_count_n, p_right_rate, p_days_n = self._stat_to_features(
                 self._pair_hist_raw.get((buyer_id, ex_id)),
@@ -423,6 +611,8 @@ class PairFeatureBuilder:
             pair_count_n[i] = p_count_n
             pair_right_rate[i] = p_right_rate
             pair_days_n[i] = p_days_n
+            pair_avg_dwell_norm[i] = float(self._pair_avg_dwell_norm.get((buyer_id, ex_id), 0.0))
+            pair_last_shown_rank_norm[i] = float(self._pair_last_shown_rank_norm.get((buyer_id, ex_id), 0.5))
 
         if retrieval_map:
             retrieval_score = np.array([retrieval_map.get(x, (0.5, 0.5, 0.0, 0.0, "retrieval"))[0] for x in exporter_ids], dtype=np.float64)
@@ -451,8 +641,32 @@ class PairFeatureBuilder:
 
         if self.text_encoder is not None:
             text_similarity = np.asarray(self.text_encoder.similarity_scores(buyer_id, exporter_ids), dtype=np.float64)
+            if self.teacher_enabled:
+                teacher_score = np.asarray(
+                    self.text_encoder.teacher_scores_for_pairs(
+                        [buyer_id] * len(exporter_ids),
+                        exporter_ids,
+                    ),
+                    dtype=np.float64,
+                )
+            else:
+                teacher_score = np.asarray(text_similarity, dtype=np.float64)
         else:
             text_similarity = np.asarray(industry_sim, dtype=np.float64)
+            teacher_score = np.asarray(text_similarity, dtype=np.float64)
+
+        if self.graph_scorer is not None:
+            graph_sim = np.asarray(self.graph_scorer(buyer_id, exporter_ids), dtype=np.float64)
+        else:
+            graph_sim = np.asarray(retrieval_score, dtype=np.float64)
+
+        sequence_score = np.clip(
+            0.50 * pair_right_rate
+            + 0.30 * buyer_right_rate
+            + 0.20 * (1.0 - pair_days_n),
+            0.0,
+            1.0,
+        )
 
         warning = risk_warn or comm_warn
         out = pd.DataFrame(
@@ -461,11 +675,12 @@ class PairFeatureBuilder:
                 "exporter_id": np.array(exporter_ids, dtype=object),
                 "exporter_state": exporter_state,
                 "exporter_cert": exporter_cert,
-                "exporter_industry": exporter_industry,
                 "industry": industry,
                 "candidate_source": candidate_source,
                 "industry_match": industry_sim,
                 "industry_similarity": industry_sim,
+                "hs_match_score": hs_match,
+                "country_complement_score": country_comp,
                 "industry_assoc_score": industry_assoc_score,
                 "industry_assoc_hit": industry_assoc_hit,
                 "cap_fit": cap_fit,
@@ -475,7 +690,8 @@ class PairFeatureBuilder:
                 "buyer_intent": np.full(len(exporters), buyer_intent, dtype=np.float64),
                 "exporter_intent": exporter_intent,
                 "comm_score": np.full(len(exporters), comm_score, dtype=np.float64),
-                "news_risk_penalty": np.full(len(exporters), news_penalty, dtype=np.float64),
+                "news_risk_penalty": np.full(len(exporters), news_penalty_cal, dtype=np.float64),
+                "news_risk_penalty_raw": np.full(len(exporters), news_penalty, dtype=np.float64),
                 "exporter_risk_penalty": ex_risk_penalty,
                 "total_risk_penalty": total_penalty,
                 "shock_score": np.full(len(exporters), shock, dtype=np.float64),
@@ -487,16 +703,24 @@ class PairFeatureBuilder:
                 "w_comm": np.full(len(exporters), w_match["comm"], dtype=np.float64),
                 "buyer_swipe_count_norm": np.full(len(exporters), buyer_count_n, dtype=np.float64),
                 "buyer_right_rate": np.full(len(exporters), buyer_right_rate, dtype=np.float64),
+                "buyer_recent_right_rate": np.full(len(exporters), buyer_recent_right_rate, dtype=np.float64),
                 "buyer_days_since_last": np.full(len(exporters), buyer_days_n, dtype=np.float64),
+                "buyer_avg_dwell_norm": np.full(len(exporters), buyer_avg_dwell_norm, dtype=np.float64),
                 "exporter_swipe_count_norm": exporter_count_n,
                 "exporter_right_rate": exporter_right_rate,
                 "exporter_days_since_last": exporter_days_n,
+                "exporter_avg_dwell_norm": exporter_avg_dwell_norm,
                 "pair_interaction_count_norm": pair_count_n,
                 "pair_right_rate": pair_right_rate,
                 "pair_days_since_last": pair_days_n,
+                "pair_avg_dwell_norm": pair_avg_dwell_norm,
+                "pair_last_shown_rank_norm": pair_last_shown_rank_norm,
+                "sequence_score": sequence_score,
                 "retrieval_score": retrieval_score,
                 "retrieval_rank_norm": retrieval_rank_norm,
                 "text_similarity": text_similarity,
+                "teacher_score": teacher_score,
+                "graph_sim": graph_sim,
             }
         )
         return out, warning
@@ -511,6 +735,11 @@ class PairFeatureBuilder:
         buyer_industry = canonicalize(as_text(buyer.get("Industry", "")))
         exporter_industry = canonicalize(as_text(exporter.get("Industry", "")))
         industry_match = industry_similarity(buyer_industry, exporter_industry)
+        buyer_country = as_text(buyer.get("Country", ""))
+        buyer_hs_tokens = self._row_hs_tokens(buyer, is_buyer=True)
+        exporter_hs_tokens = self._row_hs_tokens(exporter, is_buyer=False)
+        hs_match_score = self._hs_match_score(buyer_hs_tokens, exporter_hs_tokens, industry_match)
+        country_comp = self._country_complement_score(buyer_country, "india")
 
         buyer_trust = safe_float(buyer.get("buyer_trust", 0.0), 0.0)
         buyer_intent = safe_float(buyer.get("buyer_intent", 0.0), 0.0)
@@ -531,14 +760,19 @@ class PairFeatureBuilder:
             + 0.15 * safe_float(exporter.get("Natural_Calamity_Risk", 0), 0)
             + 0.10 * abs(safe_float(exporter.get("Currency_Shift", 0), 0))
         )
-        ex_penalty = float(min(20.0, 20.0 * ex_risk))
-        total_penalty = float(min(30.0, n_penalty + ex_penalty))
+        ex_penalty = float(min(10.0, 10.0 * np.power(np.clip(ex_risk, 0.0, 1.0), 1.4)))
+        n_penalty_cal = float(min(10.0, 10.0 * np.power(np.clip(n_penalty / 30.0, 0.0, 1.0), 1.4)))
+        total_penalty = float(min(10.0, n_penalty_cal + ex_penalty))
         non_industry_match = (
             w_match["cap_fit"] * cap
             + w_match["intent"] * intent_fit
             + w_match["comm"] * comm_score
         )
-        base_match = 0.80 * non_industry_match + 0.20 * (industry_match * 100.0)
+        base_match = (
+            0.70 * non_industry_match
+            + 0.20 * (industry_match * 100.0)
+            + 0.10 * (hs_match_score * 100.0)
+        )
         match_after_risk = float(np.clip(base_match - total_penalty, 0.0, 100.0))
 
         buyer_count_n, buyer_right_rate, buyer_days_n = self._stat_to_features(
@@ -546,15 +780,22 @@ class PairFeatureBuilder:
             self._max_buyer_count,
             default_right_rate=0.5,
         )
+        buyer_recent_right_rate = float(self._buyer_recent_right_rate.get(as_text(buyer_id), buyer_right_rate))
+        buyer_avg_dwell_norm = float(self._buyer_avg_dwell_norm.get(as_text(buyer_id), 0.0))
         exporter_count_n, exporter_right_rate, exporter_days_n = self._stat_to_features(
             self._exporter_hist_raw.get(as_text(exporter_id)),
             self._max_exporter_count,
             default_right_rate=0.5,
         )
+        exporter_avg_dwell_norm = float(self._exporter_avg_dwell_norm.get(as_text(exporter_id), 0.0))
         pair_count_n, pair_right_rate, pair_days_n = self._stat_to_features(
             self._pair_hist_raw.get((as_text(buyer_id), as_text(exporter_id))),
             self._max_pair_count,
             default_right_rate=buyer_right_rate,
+        )
+        pair_avg_dwell_norm = float(self._pair_avg_dwell_norm.get((as_text(buyer_id), as_text(exporter_id)), 0.0))
+        pair_last_shown_rank_norm = float(
+            self._pair_last_shown_rank_norm.get((as_text(buyer_id), as_text(exporter_id)), 0.5)
         )
         if self.retrieval_scorer is not None:
             retrieval_score = float(np.asarray(self.retrieval_scorer(as_text(buyer_id), [as_text(exporter_id)]), dtype=np.float64)[0])
@@ -570,14 +811,34 @@ class PairFeatureBuilder:
             )
         if self.text_encoder is not None:
             text_similarity = float(self.text_encoder.similarity_pair(as_text(buyer_id), as_text(exporter_id)))
+            if self.teacher_enabled:
+                teacher_score = float(self.text_encoder.teacher_pair_score(as_text(buyer_id), as_text(exporter_id)))
+            else:
+                teacher_score = float(text_similarity)
         else:
             text_similarity = float(np.clip(industry_match, 0.0, 1.0))
+            teacher_score = float(text_similarity)
+        if self.graph_scorer is not None:
+            graph_sim = float(np.asarray(self.graph_scorer(as_text(buyer_id), [as_text(exporter_id)]), dtype=np.float64)[0])
+        else:
+            graph_sim = float(retrieval_score)
+        sequence_score = float(
+            np.clip(
+                0.50 * pair_right_rate
+                + 0.30 * buyer_right_rate
+                + 0.20 * (1.0 - pair_days_n),
+                0.0,
+                1.0,
+            )
+        )
 
         return pd.DataFrame(
             [
                 {
                     "industry_match": industry_match,
                     "industry_similarity": industry_match,
+                    "hs_match_score": hs_match_score,
+                    "country_complement_score": country_comp,
                     "cap_fit": cap,
                     "intent_fit": intent_fit,
                     "pair_trust": pair_trust,
@@ -585,7 +846,8 @@ class PairFeatureBuilder:
                     "buyer_intent": buyer_intent,
                     "exporter_intent": exporter_intent,
                     "comm_score": comm_score,
-                    "news_risk_penalty": n_penalty,
+                    "news_risk_penalty": n_penalty_cal,
+                    "news_risk_penalty_raw": n_penalty,
                     "exporter_risk_penalty": ex_penalty,
                     "total_risk_penalty": total_penalty,
                     "shock_score": shock,
@@ -597,16 +859,24 @@ class PairFeatureBuilder:
                     "w_comm": w_match["comm"],
                     "buyer_swipe_count_norm": buyer_count_n,
                     "buyer_right_rate": buyer_right_rate,
+                    "buyer_recent_right_rate": buyer_recent_right_rate,
                     "buyer_days_since_last": buyer_days_n,
+                    "buyer_avg_dwell_norm": buyer_avg_dwell_norm,
                     "exporter_swipe_count_norm": exporter_count_n,
                     "exporter_right_rate": exporter_right_rate,
                     "exporter_days_since_last": exporter_days_n,
+                    "exporter_avg_dwell_norm": exporter_avg_dwell_norm,
                     "pair_interaction_count_norm": pair_count_n,
                     "pair_right_rate": pair_right_rate,
                     "pair_days_since_last": pair_days_n,
+                    "pair_avg_dwell_norm": pair_avg_dwell_norm,
+                    "pair_last_shown_rank_norm": pair_last_shown_rank_norm,
+                    "sequence_score": sequence_score,
                     "retrieval_score": retrieval_score,
                     "retrieval_rank_norm": retrieval_rank_norm,
                     "text_similarity": text_similarity,
+                    "teacher_score": teacher_score,
+                    "graph_sim": graph_sim,
                     "industry_assoc_score": float(industry_assoc_score),
                     "industry_assoc_hit": float(industry_assoc_hit),
                     "candidate_source": str(candidate_source),

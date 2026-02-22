@@ -34,6 +34,11 @@ htmlcov/
 models/
 *.pkl
 
+# ML runtime artifacts
+data/cache/
+data/metrics/
+data/labels/new_swipes_batch*.csv
+
 # Next.js
 node_modules/
 .next/

@@ -94,6 +94,9 @@ export interface MatchCardDTO {
   // Internal IDs for bridging Next.js routes to ML backend.
   buyerId?: string;
   exporterId?: string;
+  candidateSource?: string;
+  shownRank?: number;
+  recommendationVersion?: string;
   backendWarning?: string;
 }
 

@@ -19,6 +19,9 @@ const DEFAULT_EXPORTER_ID =
 type BackendFeedCard = {
   buyer_id?: string;
   exporter_id?: string;
+  shown_rank?: number;
+  candidate_source?: string;
+  recommendation_version?: string;
   exporter_state?: string;
   exporter_cert?: string;
   exporter_industry?: string;
@@ -152,6 +155,9 @@ function mapBackendCard(card: BackendFeedCard, buyerId: string): MatchCardDTO {
     lastActive: 'recent',
     buyerId,
     exporterId,
+    candidateSource: String(card.candidate_source || 'recommended'),
+    shownRank: Number(card.shown_rank || 0) || undefined,
+    recommendationVersion: String(card.recommendation_version || process.env.RECOMMENDATION_VERSION || 'hybrid-v1'),
     backendWarning: card.warning || undefined,
   };
 }

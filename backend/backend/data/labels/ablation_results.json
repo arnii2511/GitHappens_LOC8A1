@@ -1,0 +1,215 @@
+{
+  "split": {
+    "train_rows": 9558,
+    "test_rows": 2442,
+    "test_ratio": 0.2
+  },
+  "k": 10,
+  "results": [
+    {
+      "experiment_id": "B0",
+      "config": {
+        "hard_negatives": false,
+        "logq_correction": false,
+        "distillation": false,
+        "teacher_feature": false,
+        "graph_feature": false
+      },
+      "ranking_metrics": {
+        "precision_at_k": 0.008413793103448277,
+        "recall_at_k": 0.04528735632183908,
+        "hit_rate_at_k": 0.08137931034482758,
+        "map_at_k": 0.01257854406130268,
+        "ndcg_at_k": 0.018610533783132512,
+        "n_eval_buyers": 725
+      },
+      "retrieval_metrics": {
+        "recall_at_50": 0.45655172413793105,
+        "recall_at_100": 0.5725287356321839,
+        "recall_at_500": 0.7655172413793103,
+        "recall_at_1000": 0.7905747126436783,
+        "source_mix": {
+          "industry_direct": 1.0
+        }
+      },
+      "classification_metrics": {
+        "accuracy": 0.31210191082802546,
+        "balanced_accuracy": 0.49802391852751565,
+        "auc": 0.4720732504905167,
+        "n_eval_pairs": 1413
+      },
+      "backend": {
+        "supervised": "xgboost",
+        "ltr": "xgboost",
+        "retrieval": "two_tower_torch",
+        "text": "sentence_transformer",
+        "teacher": "none",
+        "graph": "none"
+      }
+    },
+    {
+      "experiment_id": "R1",
+      "config": {
+        "hard_negatives": true,
+        "logq_correction": false,
+        "distillation": false,
+        "teacher_feature": false,
+        "graph_feature": false
+      },
+      "ranking_metrics": {
+        "precision_at_k": 0.008275862068965517,
+        "recall_at_k": 0.04586206896551724,
+        "hit_rate_at_k": 0.08,
+        "map_at_k": 0.01160536398467433,
+        "ndcg_at_k": 0.018072528953057738,
+        "n_eval_buyers": 725
+      },
+      "retrieval_metrics": {
+        "recall_at_50": 0.4450574712643678,
+        "recall_at_100": 0.578735632183908,
+        "recall_at_500": 0.7643678160919539,
+        "recall_at_1000": 0.7905747126436783,
+        "source_mix": {
+          "industry_direct": 1.0
+        }
+      },
+      "classification_metrics": {
+        "accuracy": 0.31263232180663375,
+        "balanced_accuracy": 0.4980392156862745,
+        "auc": 0.47108133194106044,
+        "n_eval_pairs": 1417
+      },
+      "backend": {
+        "supervised": "xgboost",
+        "ltr": "xgboost",
+        "retrieval": "two_tower_torch",
+        "text": "sentence_transformer",
+        "teacher": "none",
+        "graph": "none"
+      }
+    },
+    {
+      "experiment_id": "R2",
+      "config": {
+        "hard_negatives": true,
+        "logq_correction": true,
+        "distillation": false,
+        "teacher_feature": false,
+        "graph_feature": false
+      },
+      "ranking_metrics": {
+        "precision_at_k": 0.009241379310344829,
+        "recall_at_k": 0.05183908045977011,
+        "hit_rate_at_k": 0.08275862068965517,
+        "map_at_k": 0.01693541324575807,
+        "ndcg_at_k": 0.023156767413439843,
+        "n_eval_buyers": 725
+      },
+      "retrieval_metrics": {
+        "recall_at_50": 0.05229885057471265,
+        "recall_at_100": 0.09701149425287356,
+        "recall_at_500": 0.526551724137931,
+        "recall_at_1000": 0.7275862068965517,
+        "source_mix": {
+          "industry_direct": 1.0
+        }
+      },
+      "classification_metrics": {
+        "accuracy": 0.31365313653136534,
+        "balanced_accuracy": 0.4987463552744637,
+        "auc": 0.4948234332962404,
+        "n_eval_pairs": 813
+      },
+      "backend": {
+        "supervised": "xgboost",
+        "ltr": "xgboost",
+        "retrieval": "two_tower_torch",
+        "text": "sentence_transformer",
+        "teacher": "none",
+        "graph": "none"
+      }
+    },
+    {
+      "experiment_id": "T1",
+      "config": {
+        "hard_negatives": true,
+        "logq_correction": true,
+        "distillation": true,
+        "teacher_feature": true,
+        "graph_feature": false
+      },
+      "ranking_metrics": {
+        "precision_at_k": 0.009793103448275864,
+        "recall_at_k": 0.05563218390804597,
+        "hit_rate_at_k": 0.09793103448275862,
+        "map_at_k": 0.019580186097427475,
+        "ndcg_at_k": 0.024736756199253165,
+        "n_eval_buyers": 725
+      },
+      "retrieval_metrics": {
+        "recall_at_50": 0.047126436781609195,
+        "recall_at_100": 0.10666666666666667,
+        "recall_at_500": 0.5129885057471264,
+        "recall_at_1000": 0.7289655172413793,
+        "source_mix": {
+          "industry_direct": 1.0
+        }
+      },
+      "classification_metrics": {
+        "accuracy": 0.31476683937823835,
+        "balanced_accuracy": 0.5028195488721805,
+        "auc": 0.4887218045112782,
+        "n_eval_pairs": 772
+      },
+      "backend": {
+        "supervised": "xgboost",
+        "ltr": "xgboost",
+        "retrieval": "two_tower_torch",
+        "text": "sentence_transformer",
+        "teacher": "cross_encoder",
+        "graph": "none"
+      }
+    },
+    {
+      "experiment_id": "L1",
+      "config": {
+        "hard_negatives": true,
+        "logq_correction": true,
+        "distillation": true,
+        "teacher_feature": true,
+        "graph_feature": true
+      },
+      "ranking_metrics": {
+        "precision_at_k": 0.015586206896551725,
+        "recall_at_k": 0.09172413793103448,
+        "hit_rate_at_k": 0.14758620689655172,
+        "map_at_k": 0.02914148877941981,
+        "ndcg_at_k": 0.03957840100442786,
+        "n_eval_buyers": 725
+      },
+      "retrieval_metrics": {
+        "recall_at_50": 0.07459770114942528,
+        "recall_at_100": 0.15310344827586206,
+        "recall_at_500": 0.5716091954022988,
+        "recall_at_1000": 0.7601149425287356,
+        "source_mix": {
+          "industry_direct": 1.0
+        }
+      },
+      "classification_metrics": {
+        "accuracy": 0.30190796857463525,
+        "balanced_accuracy": 0.4978902449228415,
+        "auc": 0.4631211226526733,
+        "n_eval_pairs": 891
+      },
+      "backend": {
+        "supervised": "xgboost",
+        "ltr": "xgboost",
+        "retrieval": "two_tower_torch",
+        "text": "sentence_transformer",
+        "teacher": "cross_encoder",
+        "graph": "svd_graph"
+      }
+    }
+  ]
+}

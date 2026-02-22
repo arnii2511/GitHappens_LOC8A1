@@ -66,12 +66,15 @@ except Exception:
     TORCH_AVAILABLE = False
 
 try:
-    from sentence_transformers import SentenceTransformer
+    from sentence_transformers import CrossEncoder, SentenceTransformer
 
     SENTENCE_TRANSFORMERS_AVAILABLE = True
+    CROSS_ENCODER_AVAILABLE = True
 except Exception:
     SentenceTransformer = None
+    CrossEncoder = None
     SENTENCE_TRANSFORMERS_AVAILABLE = False
+    CROSS_ENCODER_AVAILABLE = False
 
 
 def as_text(value) -> str:

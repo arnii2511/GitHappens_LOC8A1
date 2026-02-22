@@ -28,10 +28,12 @@ class CollaborativeModel:
         self.exporter_embeddings = np.zeros((len(self._exporter_pos), 1), dtype=np.float64)
         self.ready = False
         self.device = "cpu"
+        self.backend = "none"
 
     def fit(self, interactions: pd.DataFrame):
         self.ready = False
         self.device = "cpu"
+        self.backend = "none"
         if interactions.empty:
             return
 
@@ -84,10 +86,12 @@ class CollaborativeModel:
             self.exporter_embeddings = normalize_rows(cp.asnumpy(exporter_latent))
             self.ready = True
             self.device = "gpu"
+            self.backend = "svd"
             return True
         except Exception:
             self.ready = False
             self.device = "cpu"
+            self.backend = "none"
             return False
 
     def _fit_cpu(self, rows: np.ndarray, cols: np.ndarray, vals: np.ndarray, n_b: int, n_e: int):
@@ -111,6 +115,7 @@ class CollaborativeModel:
         self.exporter_embeddings = normalize_rows(exporter_latent)
         self.ready = True
         self.device = "cpu"
+        self.backend = "svd"
 
     def score(self, buyer_id: str, exporter_ids: np.ndarray) -> np.ndarray:
         out = np.zeros(len(exporter_ids), dtype=np.float64)

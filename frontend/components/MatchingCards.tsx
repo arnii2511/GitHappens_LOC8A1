@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -26,6 +26,13 @@ interface MatchingCardsProps {
   onConnect?: (connection: ConnectionRequest) => void;
   onSwipeAction?: (payload: { action: SwipeAction; finalScore: number }) => void;
   accountType?: 'exporter' | 'buyer';
+}
+
+function createSessionId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `sess-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 // ─── Trust Score Badge ───
@@ -110,6 +117,8 @@ export default function MatchingCards({
   const [animationDirection, setAnimationDirection] = useState<'left' | 'right' | 'up' | 'down' | null>(null);
   const [isLoadingFeed, setIsLoadingFeed] = useState(true);
   const [feedError, setFeedError] = useState<string | null>(null);
+  const sessionIdRef = useRef<string>(createSessionId());
+  const shownAtRef = useRef<Record<string, number>>({});
 
   const loadFeed = useCallback(async () => {
     setIsLoadingFeed(true);
@@ -135,6 +144,7 @@ export default function MatchingCards({
       const data = (await res.json()) as FeedResponse & { buyerId?: string };
       setFeed(data.cards || []);
       setSwipedIds(new Set());
+      shownAtRef.current = {};
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to load feed.';
       setFeedError(message);
@@ -152,6 +162,13 @@ export default function MatchingCards({
   const currentCard = activeCards.length > 0 ? activeCards[0] : null;
   const remainingCount = activeCards.length;
 
+  useEffect(() => {
+    if (!currentCard) return;
+    if (!shownAtRef.current[currentCard.matchId]) {
+      shownAtRef.current[currentCard.matchId] = Date.now();
+    }
+  }, [currentCard]);
+
   // Swipe handler (unified for all actions)
   const handleSwipe = useCallback(
     async (action: SwipeAction) => {
@@ -168,6 +185,14 @@ export default function MatchingCards({
 
       // Call API endpoint
       try {
+        const shownAt = shownAtRef.current[currentCard.matchId] || Date.now();
+        const dwellMs = Math.max(0, Date.now() - shownAt);
+        const shownRank = Number(currentCard.shownRank || 1) || 1;
+        const source = currentCard.candidateSource || 'recommended';
+        const recommendationVersion =
+          currentCard.recommendationVersion ||
+          process.env.NEXT_PUBLIC_RECOMMENDATION_VERSION ||
+          'hybrid-v1';
         const actionPath = action === 'like' ? 'connect' : action === 'dislike' ? 'skip' : action;
         await fetch(`/api/matches/${currentCard.matchId}/${actionPath}`, {
           method: 'POST',
@@ -177,6 +202,11 @@ export default function MatchingCards({
             action,
             buyerId: currentCard.buyerId,
             exporterId: currentCard.exporterId || currentCard.matchId,
+            session_id: sessionIdRef.current,
+            shown_rank: shownRank,
+            source,
+            dwell_ms: dwellMs,
+            recommendation_version: recommendationVersion,
           }),
         });
       } catch {

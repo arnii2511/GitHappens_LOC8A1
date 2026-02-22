@@ -38,12 +38,16 @@ For setup/training/evaluation commands on a new machine, see `backend/QUICKSTART
 - `feature_builder.py`: pairwise candidate feature construction.
   - Adds behavior history features (buyer/exporter/pair swipe rates, recency, interaction depth).
   - Builds hybrid candidate pool: strong industry-similarity core + controlled diverse exploration pool.
+  - Adds `teacher_score` (cross-encoder distillation target) and `graph_sim` (graph embedding similarity).
+- `graph_features.py`: graph-derived buyer/exporter embeddings and `graph_sim` feature.
 - `supervised.py`: online supervised ranking model.
   - Uses class-imbalance handling (sample/class weighting).
+  - Applies PU-style denoising weights for implicit/noisy negatives.
 - `collaborative.py`: interaction embedding model (SVD).
 - `ltr.py`: learning-to-rank model (LightGBM/XGBoost with fallback).
   - Runs small parameter search and picks best trial by ranking quality.
   - Tries GPU first when enabled, then safely falls back to CPU.
+  - Applies PU-style denoising weights for implicit/noisy negatives.
 - `time_decay.py`: recency weighting for interactions.
  - Full end-to-end GPU requires CUDA-enabled XGBoost and CuPy (for collaborative SVD + GPU-side prediction input).
 - `hybrid_ranker.py`: orchestrates supervised + collaborative blend.
@@ -52,7 +56,9 @@ For setup/training/evaluation commands on a new machine, see `backend/QUICKSTART
 
 ### `app/retrieval/`
 - `text_encoder.py`: semantic text embeddings (SentenceTransformer with TF-IDF fallback).
+- `text_encoder.py`: optional cross-encoder teacher scoring for distillation (`teacher_score`).
 - `two_tower.py`: dual-encoder retrieval model (buyer tower + exporter tower).
+  - Includes hard-negative sampling, logQ-style correction, and teacher distillation loss.
 - `ann_index.py`: ANN candidate search over exporter embeddings.
 - `industry_rules.py`: cross-industry association mining (support/confidence/lift) for candidate expansion.
 
