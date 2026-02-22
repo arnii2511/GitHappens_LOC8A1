@@ -31,21 +31,19 @@ import type {
   ChatMessage,
   AppNotification,
 } from '@/lib/types';
-import {
-  mockMessages as initialMessages,
-} from '@/lib/mock-data';
 
 interface ConnectionsProps {
   connections: ConnectionRequest[];
   setConnections: React.Dispatch<React.SetStateAction<ConnectionRequest[]>>;
   notifications: AppNotification[];
   setNotifications: React.Dispatch<React.SetStateAction<AppNotification[]>>;
+  accountType?: 'exporter' | 'buyer';
 }
 
-// ─── Constants ───
+// â”€â”€â”€ Constants â”€â”€â”€
 const CURRENT_ORG_ID = 'org-exp-001';
-const CURRENT_ORG_NAME = 'Your Company';
 
+// ─── Constants ───
 // ─── Status Config ───
 const statusConfig: Record<
   ConnectionStatus,
@@ -89,17 +87,25 @@ function formatTime(dateStr: string): string {
 // ─── ConnectionCard ───
 function ConnectionCard({
   connection,
+  accountType,
   unreadCount,
   isActive,
   onSelect,
 }: {
   connection: ConnectionRequest;
+  accountType: 'exporter' | 'buyer';
   unreadCount: number;
   isActive: boolean;
   onSelect: () => void;
 }) {
   const cfg = statusConfig[connection.status];
   const StatusIcon = cfg.icon;
+  const counterpartName =
+    accountType === 'buyer' ? connection.exporterOrgName : connection.importerOrgName;
+  const counterpartMeta =
+    accountType === 'buyer'
+      ? connection.exporterOrgId
+      : `${connection.importerCountry} | ${connection.importerIndustry}`;
 
   return (
     <button
@@ -113,17 +119,13 @@ function ConnectionCard({
           <div className="flex items-center gap-2 mb-1">
             <Building2 className="w-4 h-4 text-sky-400 flex-shrink-0" />
             <p className="text-sm font-semibold text-white truncate">
-              {connection.importerOrgName}
+              {counterpartName}
             </p>
           </div>
           <div className="flex items-center gap-2 mb-2">
             <Globe className="w-3 h-3 text-slate-500" />
             <span className="text-xs text-slate-400">
-              {connection.importerCountry}
-            </span>
-            <span className="text-xs text-slate-600">|</span>
-            <span className="text-xs text-slate-400">
-              {connection.importerIndustry}
+              {counterpartMeta}
             </span>
           </div>
           <div className="flex items-center gap-2">
@@ -157,8 +159,16 @@ function ConnectionCard({
 }
 
 // ─── Chat Bubble ───
-function ChatBubble({ message }: { message: ChatMessage }) {
-  const isOwn = message.senderRole === 'exporter';
+function ChatBubble({
+  message,
+  accountType,
+}: {
+  message: ChatMessage;
+  accountType: 'exporter' | 'buyer';
+}) {
+  const isOwn =
+    (accountType === 'exporter' && message.senderRole === 'exporter') ||
+    (accountType === 'buyer' && message.senderRole === 'importer');
 
   return (
     <div className={`flex ${isOwn ? 'justify-end' : 'justify-start'} mb-3`}>
@@ -198,14 +208,19 @@ function ChatBubble({ message }: { message: ChatMessage }) {
 
 // ─── BuyerSimulationPanel ───
 // Simulates the buyer side: accept/decline incoming requests
+// ─── Main Connections Component ───
 function BuyerSimulationPanel({
   connections,
+  buyerOrgId,
   onRespond,
 }: {
   connections: ConnectionRequest[];
+  buyerOrgId: string;
   onRespond: (connectionId: string, action: 'accepted' | 'declined') => void;
 }) {
-  const pendingRequests = connections.filter((c) => c.status === 'pending');
+  const pendingRequests = connections.filter(
+    (c) => c.status === 'pending' && c.importerOrgId === buyerOrgId
+  );
 
   if (pendingRequests.length === 0) {
     return (
@@ -233,6 +248,9 @@ function BuyerSimulationPanel({
             <div className="min-w-0 flex-1">
               <p className="text-sm font-semibold text-white">
                 {conn.exporterOrgName} wants to connect
+              </p>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Exporter ID: {conn.exporterOrgId}
               </p>
               <p className="text-xs text-slate-400 mt-0.5">
                 Match Score: {conn.finalScore} | {conn.importerIndustry}
@@ -269,22 +287,31 @@ function BuyerSimulationPanel({
   );
 }
 
-// ─── Main Connections Component ───
 export default function Connections({
   connections,
   setConnections,
   notifications,
   setNotifications,
+  accountType = 'exporter',
 }: ConnectionsProps) {
-  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
+  const isBuyer = accountType === 'buyer';
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
   const [newMessage, setNewMessage] = useState('');
   const [filterStatus, setFilterStatus] = useState<ConnectionStatus | 'all'>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [viewMode, setViewMode] = useState<'exporter' | 'buyer'>('exporter');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const selectedConnection = connections.find(
+  const scopedConnections = connections;
+
+  useEffect(() => {
+    if (!selectedConnectionId) return;
+    if (!scopedConnections.some((c) => c.id === selectedConnectionId)) {
+      setSelectedConnectionId(null);
+    }
+  }, [selectedConnectionId, scopedConnections]);
+
+  const selectedConnection = scopedConnections.find(
     (c) => c.id === selectedConnectionId
   );
 
@@ -294,25 +321,24 @@ export default function Connections({
 
   const unreadCountForConnection = useCallback(
     (connectionId: string) =>
-      messages.filter(
-        (m) =>
-          m.connectionId === connectionId &&
-          !m.read &&
-          m.senderId !== CURRENT_ORG_ID
+      notifications.filter(
+        (n) => !n.read && n.type === 'new_message' && n.connectionId === connectionId
       ).length,
-    [messages]
+    [notifications]
   );
 
   const totalUnread = notifications.filter((n) => !n.read).length;
 
   // Filter connections
-  const filteredConnections = connections
+  const filteredConnections = scopedConnections
     .filter((c) => filterStatus === 'all' || c.status === filterStatus)
     .filter(
       (c) =>
         !searchQuery ||
         c.importerOrgName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        c.importerCountry.toLowerCase().includes(searchQuery.toLowerCase())
+        c.exporterOrgName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        c.importerCountry.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        c.importerIndustry.toLowerCase().includes(searchQuery.toLowerCase())
     );
 
   // Scroll to bottom on new messages
@@ -320,116 +346,68 @@ export default function Connections({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [connectionMessages.length]);
 
+  useEffect(() => {
+    const loadMessages = async () => {
+      if (!selectedConnectionId) {
+        setMessages([]);
+        return;
+      }
+      const res = await fetch(`/api/connections/${selectedConnectionId}/messages`, {
+        cache: 'no-store',
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as { messages?: ChatMessage[] };
+      setMessages(data.messages ?? []);
+    };
+    void loadMessages();
+  }, [selectedConnectionId]);
+
   // Mark messages as read when selecting a connection
   useEffect(() => {
     if (!selectedConnectionId) return;
-    setMessages((prev) =>
-      prev.map((m) =>
-        m.connectionId === selectedConnectionId && m.senderId !== CURRENT_ORG_ID
-          ? { ...m, read: true }
-          : m
-      )
-    );
     setNotifications((prev) =>
       prev.map((n) =>
         n.connectionId === selectedConnectionId ? { ...n, read: true } : n
       )
     );
+    void fetch('/api/notifications', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ connectionId: selectedConnectionId, read: true }),
+    });
   }, [selectedConnectionId]);
 
   // Send message
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (!newMessage.trim() || !selectedConnection) return;
     if (selectedConnection.status !== 'accepted') return;
-
-    const msg: ChatMessage = {
-      id: `msg-${Date.now()}`,
-      connectionId: selectedConnection.id,
-      senderId: CURRENT_ORG_ID,
-      senderName: CURRENT_ORG_NAME,
-      senderRole: 'exporter',
-      content: newMessage.trim(),
-      createdAt: new Date().toISOString(),
-      read: false,
-    };
-
-    setMessages((prev) => [...prev, msg]);
+    const text = newMessage.trim();
     setNewMessage('');
-
-    // Simulate buyer reply after 2s
-    setTimeout(() => {
-      const reply: ChatMessage = {
-        id: `msg-${Date.now()}-reply`,
-        connectionId: selectedConnection.id,
-        senderId: selectedConnection.importerOrgId,
-        senderName: selectedConnection.importerOrgName,
-        senderRole: 'importer',
-        content: getSimulatedReply(),
-        createdAt: new Date().toISOString(),
-        read: false,
-      };
-      setMessages((prev) => [...prev, reply]);
-
-      const notif: AppNotification = {
-        id: `notif-${Date.now()}`,
-        type: 'new_message',
-        title: 'New Message',
-        description: `${selectedConnection.importerOrgName} sent you a message.`,
-        connectionId: selectedConnection.id,
-        read: false,
-        createdAt: new Date().toISOString(),
-      };
-      setNotifications((prev) => [notif, ...prev]);
-    }, 2000);
+    const res = await fetch(`/api/connections/${selectedConnection.id}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: text }),
+    });
+    if (!res.ok) return;
+    const data = (await res.json()) as { message?: ChatMessage };
+    if (data.message) setMessages((prev) => [...prev, data.message!]);
   };
 
   // Buyer simulation: respond to connection
-  const handleBuyerRespond = (
+  const handleBuyerRespond = async (
     connectionId: string,
     action: 'accepted' | 'declined'
   ) => {
+    const res = await fetch(`/api/connections/${connectionId}/respond`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action }),
+    });
+    if (!res.ok) return;
+
     setConnections((prev) =>
-      prev.map((c) =>
-        c.id === connectionId
-          ? { ...c, status: action, respondedAt: new Date().toISOString() }
-          : c
-      )
+      prev.map((c) => (c.id === connectionId ? { ...c, status: action, respondedAt: new Date().toISOString() } : c))
     );
-
-    const conn = connections.find((c) => c.id === connectionId);
-    if (!conn) return;
-
-    const notif: AppNotification = {
-      id: `notif-${Date.now()}`,
-      type: action === 'accepted' ? 'connection_accepted' : 'connection_declined',
-      title:
-        action === 'accepted'
-          ? 'Connection Accepted'
-          : 'Connection Declined',
-      description:
-        action === 'accepted'
-          ? `${conn.importerOrgName} accepted your connection request.`
-          : `${conn.importerOrgName} declined your connection request.`,
-      connectionId,
-      read: false,
-      createdAt: new Date().toISOString(),
-    };
-    setNotifications((prev) => [notif, ...prev]);
-
-    // If accepted, add a welcome message from buyer
-    if (action === 'accepted') {
-      const welcomeMsg: ChatMessage = {
-        id: `msg-${Date.now()}-welcome`,
-        connectionId,
-        senderId: conn.importerOrgId,
-        senderName: conn.importerOrgName,
-        senderRole: 'importer',
-        content: `Hello! Thanks for connecting. We're interested in exploring potential partnerships in ${conn.importerIndustry}. How can we help each other?`,
-        createdAt: new Date().toISOString(),
-        read: false,
-      };
-      setMessages((prev) => [...prev, welcomeMsg]);
-    }
   };
 
   // Key handler for sending
@@ -454,59 +432,11 @@ export default function Connections({
               {totalUnread} unread
             </Badge>
           )}
-          <div className="flex bg-slate-800/60 rounded-lg border border-slate-700/50 p-0.5">
-            <button
-              onClick={() => setViewMode('exporter')}
-              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
-                viewMode === 'exporter'
-                  ? 'bg-sky-600 text-white'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              Exporter View
-            </button>
-            <button
-              onClick={() => setViewMode('buyer')}
-              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
-                viewMode === 'buyer'
-                  ? 'bg-sky-600 text-white'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              Buyer Sim
-            </button>
-          </div>
         </div>
       </div>
 
-      {/* ─── Buyer Simulation ─── */}
-      {viewMode === 'buyer' && (
-        <Card className="bg-gradient-to-br from-slate-800 to-slate-900 border-slate-700/50 p-5">
-          <div className="flex items-center gap-2 mb-4">
-            <UserPlus className="w-5 h-5 text-sky-400" />
-            <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-              Incoming Connection Requests
-            </h3>
-            <Badge
-              variant="outline"
-              className="bg-slate-700/30 border-slate-600/50 text-slate-400 text-[10px]"
-            >
-              Buyer Side
-            </Badge>
-          </div>
-          <p className="text-xs text-slate-400 mb-4 leading-relaxed">
-            This simulates what the buyer sees when you send a connection
-            request. Accept to unlock chat, or decline.
-          </p>
-          <BuyerSimulationPanel
-            connections={connections}
-            onRespond={handleBuyerRespond}
-          />
-        </Card>
-      )}
-
-      {/* ─── Exporter View: Connection List + Chat ─── */}
-      {viewMode === 'exporter' && (
+      {/* ─── Connections List + Chat ─── */}
+      {
         <div className="flex gap-0 h-[600px] bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl border border-slate-700/50 overflow-hidden">
           {/* Left Panel: Connection List */}
           <div
@@ -560,6 +490,7 @@ export default function Connections({
                   <ConnectionCard
                     key={conn.id}
                     connection={conn}
+                    accountType={accountType}
                     unreadCount={unreadCountForConnection(conn.id)}
                     isActive={selectedConnectionId === conn.id}
                     onSelect={() => setSelectedConnectionId(conn.id)}
@@ -647,13 +578,22 @@ export default function Connections({
                       <h3 className="text-base font-bold text-white mb-2">
                         Connection Pending
                       </h3>
-                      <p className="text-sm text-slate-400 max-w-xs leading-relaxed mb-2">
-                        Your connection request has been sent to{' '}
-                        <span className="text-white font-semibold">
-                          {selectedConnection.importerOrgName}
-                        </span>
-                        . Chat will unlock once they accept.
-                      </p>
+                      {isBuyer ? (
+                        <p className="text-sm text-slate-400 max-w-xs leading-relaxed mb-2">
+                          <span className="text-white font-semibold">
+                            {selectedConnection.exporterOrgName}
+                          </span>{' '}
+                          sent you this request. Accept to unlock chat, or decline.
+                        </p>
+                      ) : (
+                        <p className="text-sm text-slate-400 max-w-xs leading-relaxed mb-2">
+                          Your connection request has been sent to{' '}
+                          <span className="text-white font-semibold">
+                            {selectedConnection.importerOrgName}
+                          </span>
+                          . Chat will unlock once they accept.
+                        </p>
+                      )}
                       {selectedConnection.note && (
                         <div className="bg-slate-700/30 rounded-lg p-3 border border-slate-600/20 mt-3 max-w-xs">
                           <p className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold mb-1">
@@ -664,13 +604,27 @@ export default function Connections({
                           </p>
                         </div>
                       )}
-                      <p className="text-xs text-slate-500 mt-4">
-                        Tip: Switch to{' '}
-                        <span className="text-sky-400 font-semibold">
-                          Buyer Sim
-                        </span>{' '}
-                        to simulate accepting this request.
-                      </p>
+                      {isBuyer && (
+                        <div className="flex gap-2 mt-4">
+                          <Button
+                            onClick={() => void handleBuyerRespond(selectedConnection.id, 'accepted')}
+                            size="sm"
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5 mr-1.5" />
+                            Accept
+                          </Button>
+                          <Button
+                            onClick={() => void handleBuyerRespond(selectedConnection.id, 'declined')}
+                            size="sm"
+                            variant="outline"
+                            className="border-slate-600 text-slate-300 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/30 text-xs"
+                          >
+                            <XCircle className="w-3.5 h-3.5 mr-1.5" />
+                            Decline
+                          </Button>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -718,7 +672,7 @@ export default function Connections({
                         </div>
                       ) : (
                         connectionMessages.map((msg) => (
-                          <ChatBubble key={msg.id} message={msg} />
+                          <ChatBubble key={msg.id} message={msg} accountType={accountType} />
                         ))
                       )}
                       <div ref={messagesEndRef} />
@@ -775,19 +729,8 @@ export default function Connections({
             )}
           </div>
         </div>
-      )}
+      }
     </div>
   );
 }
 
-// Simulated replies
-function getSimulatedReply(): string {
-  const replies = [
-    "That sounds very interesting! Let me review the details with our procurement team and get back to you.",
-    "We appreciate the quick response. Could you also share your certifications and compliance documentation?",
-    "Excellent! Our team is reviewing your proposal. We'll schedule a call to discuss specifics soon.",
-    "Thank you for the information. We're currently comparing a few suppliers and will make a decision by end of week.",
-    "Great to hear! We have some specific requirements around packaging. Can you accommodate custom labeling?",
-  ];
-  return replies[Math.floor(Math.random() * replies.length)];
-}

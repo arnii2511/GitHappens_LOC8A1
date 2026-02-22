@@ -2,26 +2,45 @@
 
 import { Card } from '@/components/ui/card';
 import {
-  LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis,
-  CartesianGrid, Tooltip, Legend, ResponsiveContainer, Area, AreaChart
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
 } from 'recharts';
 import { TrendingUp, Users, Target, Zap } from 'lucide-react';
+import type { ComponentType } from 'react';
 
-const matchSuccessData = [
-  { month: 'Jan', matches: 45, connected: 32, deals: 8 },
-  { month: 'Feb', matches: 52, connected: 38, deals: 12 },
-  { month: 'Mar', matches: 48, connected: 35, deals: 10 },
-  { month: 'Apr', matches: 65, connected: 48, deals: 16 },
-  { month: 'May', matches: 72, connected: 54, deals: 19 },
-  { month: 'Jun', matches: 85, connected: 62, deals: 24 },
-];
+export type DashboardTimelinePoint = {
+  label: string;
+  matches: number;
+  connected: number;
+  skipped: number;
+};
 
-const scoreDistribution = [
-  { range: '90-100', count: 24, fill: '#10b981' },
-  { range: '80-89', count: 42, fill: '#06b6d4' },
-  { range: '70-79', count: 28, fill: '#f59e0b' },
-  { range: '60-69', count: 12, fill: '#ef4444' },
-];
+export type DashboardScoreBucket = {
+  range: string;
+  count: number;
+  fill: string;
+};
+
+export type DashboardStats = {
+  totalMatches: number;
+  connected: number;
+  skipped: number;
+  saved: number;
+  blocked: number;
+  avgScore: number;
+  timeline: DashboardTimelinePoint[];
+  scoreDistribution: DashboardScoreBucket[];
+};
 
 const geographicData = [
   { region: 'Asia', value: 35 },
@@ -32,7 +51,7 @@ const geographicData = [
 
 const COLORS = ['#06b6d4', '#10b981', '#f59e0b', '#ef4444'];
 
-const KPICard = ({ icon: Icon, title, value, change }: any) => (
+const KPICard = ({ icon: Icon, title, value, change }: { icon: ComponentType<{ className?: string }>; title: string; value: string; change: string }) => (
   <Card className="bg-gradient-to-br from-slate-800 to-slate-900 border-slate-700/50 p-6">
     <div className="flex items-start justify-between">
       <div>
@@ -50,50 +69,47 @@ const KPICard = ({ icon: Icon, title, value, change }: any) => (
   </Card>
 );
 
-export default function Dashboard() {
+export default function Dashboard({ stats }: { stats: DashboardStats }) {
+  const totalActions = stats.connected + stats.skipped + stats.saved + stats.blocked;
+
   return (
     <div className="space-y-6">
-      {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <KPICard icon={Target} title="Total Matches" value="342" change="↑ 23% vs last month" />
-        <KPICard icon={Users} title="Connected" value="186" change="↑ 18% vs last month" />
-        <KPICard icon={Zap} title="Deals Closed" value="47" change="↑ 31% vs last month" />
-        <KPICard icon={TrendingUp} title="Avg Score" value="84.2" change="↑ 2.4 pts" />
+        <KPICard icon={Target} title="Total Matches" value={String(stats.totalMatches)} change="Live from your swipes" />
+        <KPICard icon={Users} title="Connected" value={String(stats.connected)} change="Right swipes" />
+        <KPICard icon={Zap} title="Skipped" value={String(stats.skipped)} change="Left swipes" />
+        <KPICard icon={TrendingUp} title="Avg Score" value={stats.avgScore.toFixed(1)} change={`${totalActions} actions tracked`} />
       </div>
 
-      {/* Charts Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Match Success Timeline */}
         <Card className="bg-gradient-to-br from-slate-800 to-slate-900 border-slate-700/50 p-6 lg:col-span-2">
-          <h3 className="text-lg font-bold text-white mb-4">Match Success Timeline</h3>
+          <h3 className="text-lg font-bold text-white mb-4">Session Swipe Timeline</h3>
           <ResponsiveContainer width="100%" height={300}>
-            <AreaChart data={matchSuccessData}>
+            <AreaChart data={stats.timeline}>
               <defs>
                 <linearGradient id="colorMatches" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.3}/>
-                  <stop offset="95%" stopColor="#06b6d4" stopOpacity={0}/>
+                  <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.3} />
+                  <stop offset="95%" stopColor="#06b6d4" stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#475569" />
-              <XAxis dataKey="month" stroke="#94a3b8" />
+              <XAxis dataKey="label" stroke="#94a3b8" />
               <YAxis stroke="#94a3b8" />
-              <Tooltip 
+              <Tooltip
                 contentStyle={{
                   backgroundColor: '#1e293b',
                   border: '1px solid #475569',
                   borderRadius: '8px',
-                  color: '#e2e8f0'
+                  color: '#e2e8f0',
                 }}
               />
-              <Legend />
               <Area type="monotone" dataKey="matches" stroke="#06b6d4" fillOpacity={1} fill="url(#colorMatches)" />
               <Area type="monotone" dataKey="connected" stroke="#10b981" fillOpacity={0.1} />
-              <Area type="monotone" dataKey="deals" stroke="#f59e0b" fillOpacity={0.1} />
+              <Area type="monotone" dataKey="skipped" stroke="#f59e0b" fillOpacity={0.1} />
             </AreaChart>
           </ResponsiveContainer>
         </Card>
 
-        {/* Geographic Distribution */}
         <Card className="bg-gradient-to-br from-slate-800 to-slate-900 border-slate-700/50 p-6">
           <h3 className="text-lg font-bold text-white mb-4">Geographic Mix</h3>
           <ResponsiveContainer width="100%" height={300}>
@@ -112,12 +128,12 @@ export default function Dashboard() {
                   <Cell key={`cell-${index}`} fill={color} />
                 ))}
               </Pie>
-              <Tooltip 
+              <Tooltip
                 contentStyle={{
                   backgroundColor: '#1e293b',
                   border: '1px solid #475569',
                   borderRadius: '8px',
-                  color: '#e2e8f0'
+                  color: '#e2e8f0',
                 }}
                 formatter={(value) => `${value}%`}
               />
@@ -126,53 +142,29 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {/* Score Distribution */}
       <Card className="bg-gradient-to-br from-slate-800 to-slate-900 border-slate-700/50 p-6">
-        <h3 className="text-lg font-bold text-white mb-4">Match Score Distribution</h3>
+        <h3 className="text-lg font-bold text-white mb-4">Score Distribution (Reviewed Cards)</h3>
         <ResponsiveContainer width="100%" height={250}>
-          <BarChart data={scoreDistribution}>
+          <BarChart data={stats.scoreDistribution}>
             <CartesianGrid strokeDasharray="3 3" stroke="#475569" />
             <XAxis dataKey="range" stroke="#94a3b8" />
             <YAxis stroke="#94a3b8" />
-            <Tooltip 
+            <Tooltip
               contentStyle={{
                 backgroundColor: '#1e293b',
                 border: '1px solid #475569',
                 borderRadius: '8px',
-                color: '#e2e8f0'
+                color: '#e2e8f0',
               }}
             />
             <Bar dataKey="count" radius={[8, 8, 0, 0]}>
-              {scoreDistribution.map((entry, index) => (
+              {stats.scoreDistribution.map((entry, index) => (
                 <Cell key={`cell-${index}`} fill={entry.fill} />
               ))}
             </Bar>
           </BarChart>
         </ResponsiveContainer>
       </Card>
-
-      {/* Insights */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <Card className="bg-gradient-to-br from-slate-800 to-slate-900 border-slate-700/50 p-6">
-          <h3 className="text-lg font-bold text-white mb-3">Key Insights</h3>
-          <ul className="space-y-3 text-slate-300 text-sm">
-            <li>✓ Match accuracy improved 12% with latest algorithm update</li>
-            <li>✓ Asia region shows strongest growth at 35% of portfolio</li>
-            <li>✓ Average deal closure time reduced to 18 days</li>
-            <li>✓ 84% of deals initiated from 80+ scored matches</li>
-          </ul>
-        </Card>
-
-        <Card className="bg-gradient-to-br from-slate-800 to-slate-900 border-slate-700/50 p-6">
-          <h3 className="text-lg font-bold text-white mb-3">Recommendations</h3>
-          <ul className="space-y-3 text-slate-300 text-sm">
-            <li>→ Focus on Americas region for growth opportunity</li>
-            <li>→ Increase product category diversity (3 new SKUs)</li>
-            <li>→ Target mid-market buyers for higher conversion</li>
-            <li>→ Optimize timelines for Q3 peak season</li>
-          </ul>
-        </Card>
-      </div>
     </div>
   );
 }

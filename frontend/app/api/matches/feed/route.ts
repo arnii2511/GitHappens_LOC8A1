@@ -11,11 +11,17 @@ const DEFAULT_BUYER_ID =
   process.env.NEXT_PUBLIC_DEMO_BUYER_ID ||
   '';
 
+const DEFAULT_EXPORTER_ID =
+  process.env.DEFAULT_EXPORTER_ID ||
+  process.env.NEXT_PUBLIC_DEMO_EXPORTER_ID ||
+  'exporter-self';
+
 type BackendFeedCard = {
   buyer_id?: string;
   exporter_id?: string;
   exporter_state?: string;
   exporter_cert?: string;
+  exporter_industry?: string;
   match_score?: number;
   trust_score?: number;
   ml_score?: number;
@@ -29,6 +35,12 @@ type BackendFeedCard = {
   confidence?: number;
   reasons?: string[];
   warning?: string | null;
+};
+
+type BackendBuyerRow = {
+  Buyer_ID?: string;
+  Country?: string;
+  Industry?: string;
 };
 
 function toScore(value: unknown, fallback = 0): number {
@@ -51,6 +63,9 @@ function reasonLabel(raw: string, idx: number): { label: string; description: st
 
 function mapBackendCard(card: BackendFeedCard, buyerId: string): MatchCardDTO {
   const exporterId = String(card.exporter_id || '');
+  const exporterIndustry = String(card.exporter_industry || '').trim();
+  const exporterCertification = String(card.exporter_cert || '').trim();
+  const productCategory = exporterIndustry || exporterCertification || 'General';
   const matchScore = toScore(card.match_score, 0);
   const trustScore = toScore(card.trust_score, 0);
   const finalScore = toScore(card.final_rank, Math.max(matchScore, trustScore));
@@ -111,7 +126,7 @@ function mapBackendCard(card: BackendFeedCard, buyerId: string): MatchCardDTO {
       id: exporterId,
       name: exporterId || 'Unknown Exporter',
       country: card.exporter_state || 'Unknown',
-      industry: card.exporter_cert || 'General',
+      industry: exporterIndustry || 'General',
       companySize,
     },
     importerLocation: {
@@ -122,7 +137,7 @@ function mapBackendCard(card: BackendFeedCard, buyerId: string): MatchCardDTO {
     importerProducts: [
       {
         hsCode: 'N/A',
-        category: card.exporter_cert || 'General',
+        category: productCategory,
         description: 'Mapped from ML pipeline exporter metadata.',
       },
     ],
@@ -138,6 +153,77 @@ function mapBackendCard(card: BackendFeedCard, buyerId: string): MatchCardDTO {
     buyerId,
     exporterId,
     backendWarning: card.warning || undefined,
+  };
+}
+
+function mapBuyerRowAsCard(
+  row: BackendBuyerRow,
+  exporterId: string,
+  rankIndex: number
+): MatchCardDTO {
+  const buyerId = String(row.Buyer_ID || '').trim();
+  const country = String(row.Country || 'Unknown');
+  const industry = String(row.Industry || 'General');
+  const baseScore = Math.max(55, 88 - rankIndex);
+
+  return {
+    matchId: buyerId,
+    status: 'active',
+    importerOrg: {
+      id: buyerId,
+      name: buyerId || 'Unknown Importer',
+      country,
+      industry,
+      companySize: baseScore >= 82 ? 'Enterprise' : baseScore >= 68 ? 'Mid-market' : 'SME',
+    },
+    importerLocation: {
+      city: country,
+      region: country,
+      country,
+    },
+    importerProducts: [
+      {
+        hsCode: 'N/A',
+        category: industry,
+        description: 'Mapped from buyer industry metadata.',
+      },
+    ],
+    matchScore: baseScore,
+    trustScore: Math.max(50, baseScore - 6),
+    finalScore: Math.max(52, baseScore - 2),
+    factors: {
+      productFit: Math.max(50, baseScore - 4),
+      geographyFit: Math.max(50, baseScore - 8),
+      buyerActivity: Math.max(50, baseScore - 3),
+      scaleFit: Math.max(50, baseScore - 7),
+      marketTrend: Math.max(50, baseScore - 5),
+      tradeFrequency: Math.max(50, baseScore - 6),
+    },
+    trustComponents: {
+      registrationVerification: Math.max(50, baseScore - 6),
+      tradeHistory: Math.max(50, baseScore - 7),
+      documentationFidelity: Math.max(50, baseScore - 8),
+      paymentBehavior: Math.max(50, baseScore - 6),
+    },
+    reasons: [
+      {
+        rank: 1,
+        label: 'Buyer shortlist candidate',
+        description: 'Selected from buyer registry for exporter-side outreach.',
+        factorType: 'buyerActivity',
+      },
+      {
+        rank: 2,
+        label: 'Industry alignment',
+        description: `Buyer industry: ${industry}`,
+        factorType: 'productFit',
+      },
+    ],
+    quantity: 'Based on buyer profile signals',
+    timeline: 'TBD',
+    lastActive: 'recent',
+    buyerId,
+    exporterId,
   };
 }
 
@@ -175,6 +261,7 @@ async function resolveBuyerId(explicitBuyerId: string): Promise<string> {
  */
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
+  const role = (searchParams.get('role') || 'exporter').toLowerCase();
   const limit = parseInt(searchParams.get('limit') || '10', 10);
   const offset = parseInt(searchParams.get('offset') || '0', 10);
   const minMatchScore = parseInt(searchParams.get('minMatchScore') || '0', 10);
@@ -182,53 +269,82 @@ export async function GET(request: NextRequest) {
   const requestedBuyerId = searchParams.get('buyerId') || '';
 
   try {
-    const buyerId = await resolveBuyerId(requestedBuyerId);
-    if (!buyerId) {
-      return NextResponse.json(
-        { error: 'No buyerId provided and no default buyer could be resolved.' },
-        { status: 400 }
+    const backendLimit = Math.max(limit + offset, limit, 1);
+
+    if (role === 'buyer' || role === 'importer') {
+      const buyerId = await resolveBuyerId(requestedBuyerId);
+      if (!buyerId) {
+        return NextResponse.json(
+          { error: 'No buyerId provided and no default buyer could be resolved.' },
+          { status: 400 }
+        );
+      }
+
+      const backendRes = await fetch(
+        `${ML_API_BASE_URL}/feed?buyer_id=${encodeURIComponent(buyerId)}&limit=${backendLimit}`,
+        {
+          method: 'GET',
+          cache: 'no-store',
+        }
       );
+
+      if (!backendRes.ok) {
+        const details = await backendRes.text();
+        return NextResponse.json(
+          {
+            error: 'Failed to fetch feed from ML backend.',
+            details: details || backendRes.statusText,
+          },
+          { status: 502 }
+        );
+      }
+
+      const backendPayload = (await backendRes.json()) as {
+        cards?: BackendFeedCard[];
+      };
+
+      const mappedCards = (backendPayload.cards || []).map((card) => mapBackendCard(card, buyerId));
+      const filtered = mappedCards.filter(
+        (card) => card.matchScore >= minMatchScore && card.trustScore >= minTrustScore
+      );
+      const paged = filtered.slice(offset, offset + limit);
+      const response: FeedResponse = {
+        cards: paged,
+        total: filtered.length,
+        hasMore: offset + limit < filtered.length,
+      };
+      return NextResponse.json({ ...response, buyerId, role });
     }
 
-    const backendLimit = Math.max(limit + offset, limit, 1);
-    const backendRes = await fetch(
-      `${ML_API_BASE_URL}/feed?buyer_id=${encodeURIComponent(buyerId)}&limit=${backendLimit}`,
-      {
-        method: 'GET',
-        cache: 'no-store',
-      }
+    const buyersRes = await fetch(
+      `${ML_API_BASE_URL}/buyers?limit=${backendLimit}&offset=0`,
+      { method: 'GET', cache: 'no-store' }
     );
-
-    if (!backendRes.ok) {
-      const details = await backendRes.text();
+    if (!buyersRes.ok) {
+      const details = await buyersRes.text();
       return NextResponse.json(
         {
-          error: 'Failed to fetch feed from ML backend.',
-          details: details || backendRes.statusText,
+          error: 'Failed to fetch buyer list from ML backend.',
+          details: details || buyersRes.statusText,
         },
         { status: 502 }
       );
     }
 
-    const backendPayload = (await backendRes.json()) as {
-      cards?: BackendFeedCard[];
-    };
-
-    const mappedCards = (backendPayload.cards || []).map((card) => mapBackendCard(card, buyerId));
-
+    const buyersData = (await buyersRes.json()) as { items?: BackendBuyerRow[] };
+    const mappedCards = (buyersData.items || []).map((row, idx) =>
+      mapBuyerRowAsCard(row, DEFAULT_EXPORTER_ID, idx)
+    );
     const filtered = mappedCards.filter(
       (card) => card.matchScore >= minMatchScore && card.trustScore >= minTrustScore
     );
-
     const paged = filtered.slice(offset, offset + limit);
-
     const response: FeedResponse = {
       cards: paged,
       total: filtered.length,
       hasMore: offset + limit < filtered.length,
     };
-
-    return NextResponse.json({ ...response, buyerId });
+    return NextResponse.json({ ...response, role });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unexpected server error.';
     return NextResponse.json({ error: message }, { status: 500 });

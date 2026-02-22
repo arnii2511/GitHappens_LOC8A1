@@ -1,48 +1,133 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { MessageSquare } from 'lucide-react';
 import MatchingCards from '@/components/MatchingCards';
-import Dashboard from '@/components/Dashboard';
+import Dashboard, { type DashboardStats, type DashboardTimelinePoint } from '@/components/Dashboard';
 import Outreach from '@/components/Outreach';
 import Connections from '@/components/Connections';
 import Header from '@/components/Header';
-import type { ConnectionRequest, AppNotification } from '@/lib/types';
-import { mockConnections, mockNotifications } from '@/lib/mock-data';
+import type { ConnectionRequest, AppNotification, SwipeAction } from '@/lib/types';
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState('matches');
-  const [connections, setConnections] = useState<ConnectionRequest[]>(mockConnections);
-  const [notifications, setNotifications] = useState<AppNotification[]>(mockNotifications);
+  const [connections, setConnections] = useState<ConnectionRequest[]>([]);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [accountType, setAccountType] = useState<'exporter' | 'buyer'>('exporter');
+  const [dashboardStats, setDashboardStats] = useState<DashboardStats>({
+    totalMatches: 0,
+    connected: 0,
+    skipped: 0,
+    saved: 0,
+    blocked: 0,
+    avgScore: 0,
+    timeline: [{ label: 'Start', matches: 0, connected: 0, skipped: 0 }],
+    scoreDistribution: [
+      { range: '90-100', count: 0, fill: '#10b981' },
+      { range: '80-89', count: 0, fill: '#06b6d4' },
+      { range: '70-79', count: 0, fill: '#f59e0b' },
+      { range: '<70', count: 0, fill: '#ef4444' },
+    ],
+  });
 
   const unreadCount = notifications.filter((n) => !n.read).length;
 
-  // Called by MatchingCards when user swipes Connect
-  const handleNewConnection = useCallback((connection: ConnectionRequest) => {
-    setConnections((prev) => {
-      // Prevent duplicate connections to the same importer
-      if (prev.some((c) => c.importerOrgId === connection.importerOrgId)) return prev;
-      return [connection, ...prev];
-    });
-
-    // Add notification for connection sent
-    const notif: AppNotification = {
-      id: `notif-${Date.now()}`,
-      type: 'connection_sent',
-      title: 'Connection Sent',
-      description: `Your connection request to ${connection.importerOrgName} was sent.`,
-      connectionId: connection.id,
-      read: false,
-      createdAt: new Date().toISOString(),
-    };
-    setNotifications((prev) => [notif, ...prev]);
+  const loadProfile = useCallback(async () => {
+    const res = await fetch('/api/profile', { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = (await res.json()) as { profile?: { account_type?: string } };
+    const t = String(data.profile?.account_type || '').toLowerCase();
+    if (t === 'buyer' || t === 'exporter') setAccountType(t);
   }, []);
+
+  const loadConnections = useCallback(async () => {
+    const res = await fetch('/api/connections', { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = (await res.json()) as { connections?: ConnectionRequest[] };
+    setConnections(data.connections ?? []);
+  }, []);
+
+  const loadNotifications = useCallback(async () => {
+    const res = await fetch('/api/notifications', { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = (await res.json()) as { notifications?: AppNotification[] };
+    setNotifications(data.notifications ?? []);
+  }, []);
+
+  const loadAnalytics = useCallback(async () => {
+    const res = await fetch('/api/analytics/summary', { cache: 'no-store' });
+    if (!res.ok) return;
+    const data = (await res.json()) as DashboardStats;
+    setDashboardStats({
+      totalMatches: Number(data.totalMatches ?? 0),
+      connected: Number(data.connected ?? 0),
+      skipped: Number(data.skipped ?? 0),
+      saved: Number(data.saved ?? 0),
+      blocked: Number(data.blocked ?? 0),
+      avgScore: Number(data.avgScore ?? 0),
+      timeline: Array.isArray(data.timeline) && data.timeline.length > 0 ? data.timeline : [{ label: 'Start', matches: 0, connected: 0, skipped: 0 }],
+      scoreDistribution:
+        Array.isArray(data.scoreDistribution) && data.scoreDistribution.length > 0
+          ? data.scoreDistribution
+          : [
+              { range: '90-100', count: 0, fill: '#10b981' },
+              { range: '80-89', count: 0, fill: '#06b6d4' },
+              { range: '70-79', count: 0, fill: '#f59e0b' },
+              { range: '<70', count: 0, fill: '#ef4444' },
+            ],
+    });
+  }, []);
+
+  useEffect(() => {
+    void Promise.all([loadProfile(), loadConnections(), loadNotifications(), loadAnalytics()]);
+  }, [loadProfile, loadConnections, loadNotifications, loadAnalytics]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      void Promise.all([loadConnections(), loadNotifications(), loadAnalytics()]);
+    }, 8000);
+    return () => clearInterval(id);
+  }, [loadConnections, loadNotifications, loadAnalytics]);
+
+  // Called by MatchingCards when user swipes Connect
+  const handleNewConnection = useCallback(async (connection: ConnectionRequest) => {
+    const res = await fetch('/api/connections', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        matchId: connection.matchId,
+        importerOrgId: connection.importerOrgId,
+        importerOrgName: connection.importerOrgName,
+        importerCountry: connection.importerCountry,
+        importerIndustry: connection.importerIndustry,
+        finalScore: connection.finalScore,
+        note: connection.note,
+      }),
+    });
+    if (!res.ok) return;
+    await Promise.all([loadConnections(), loadNotifications()]);
+  }, [loadConnections, loadNotifications]);
 
   // Notification bell click navigates to Connections tab
   const handleNotificationClick = useCallback(() => {
     setActiveTab('connections');
   }, []);
+
+  const handleSwipeAction = useCallback(
+    async (payload: { action: SwipeAction; finalScore: number }) => {
+      await fetch('/api/analytics/events', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: payload.action,
+          finalScore: payload.finalScore,
+        }),
+      });
+      await loadAnalytics();
+    },
+    [loadAnalytics]
+  );
 
   return (
     <div className="min-h-screen bg-background">
@@ -75,7 +160,11 @@ export default function Home() {
           </TabsList>
 
           <TabsContent value="matches" className="space-y-4">
-            <MatchingCards onConnect={handleNewConnection} />
+            <MatchingCards
+              onConnect={handleNewConnection}
+              onSwipeAction={handleSwipeAction}
+              accountType={accountType}
+            />
           </TabsContent>
 
           <TabsContent value="connections" className="space-y-4">
@@ -84,11 +173,12 @@ export default function Home() {
               setConnections={setConnections}
               notifications={notifications}
               setNotifications={setNotifications}
+              accountType={accountType}
             />
           </TabsContent>
 
           <TabsContent value="dashboard" className="space-y-4">
-            <Dashboard />
+            <Dashboard stats={dashboardStats} />
           </TabsContent>
 
           <TabsContent value="outreach" className="space-y-4">

@@ -24,6 +24,8 @@ import type { MatchCardDTO, SwipeAction, ConnectionRequest, FeedResponse } from 
 
 interface MatchingCardsProps {
   onConnect?: (connection: ConnectionRequest) => void;
+  onSwipeAction?: (payload: { action: SwipeAction; finalScore: number }) => void;
+  accountType?: 'exporter' | 'buyer';
 }
 
 // ─── Trust Score Badge ───
@@ -97,7 +99,11 @@ function ReasonCard({ reason, index }: { reason: MatchCardDTO['reasons'][0]; ind
 }
 
 // ─── Main MatchingCards Component ───
-export default function MatchingCards({ onConnect }: MatchingCardsProps = {}) {
+export default function MatchingCards({
+  onConnect,
+  onSwipeAction,
+  accountType = 'exporter',
+}: MatchingCardsProps = {}) {
   const [feed, setFeed] = useState<MatchCardDTO[]>([]);
   const [swipedIds, setSwipedIds] = useState<Set<string>>(new Set());
   const [isAnimating, setIsAnimating] = useState(false);
@@ -111,6 +117,7 @@ export default function MatchingCards({ onConnect }: MatchingCardsProps = {}) {
 
     try {
       const params = new URLSearchParams({ limit: '50' });
+      params.set('role', accountType);
       if (process.env.NEXT_PUBLIC_DEMO_BUYER_ID) {
         params.set('buyerId', process.env.NEXT_PUBLIC_DEMO_BUYER_ID);
       }
@@ -134,7 +141,7 @@ export default function MatchingCards({ onConnect }: MatchingCardsProps = {}) {
     } finally {
       setIsLoadingFeed(false);
     }
-  }, []);
+  }, [accountType]);
 
   useEffect(() => {
     loadFeed();
@@ -194,6 +201,7 @@ export default function MatchingCards({ onConnect }: MatchingCardsProps = {}) {
         };
         onConnect(newConnection);
       }
+      onSwipeAction?.({ action, finalScore: currentCard.finalScore });
 
       // Remove card after animation
       setTimeout(() => {
@@ -202,7 +210,7 @@ export default function MatchingCards({ onConnect }: MatchingCardsProps = {}) {
         setAnimationDirection(null);
       }, 300);
     },
-    [currentCard, isAnimating, onConnect]
+    [currentCard, isAnimating, onConnect, onSwipeAction]
   );
 
   // Keyboard shortcuts
