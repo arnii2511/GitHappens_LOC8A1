@@ -1,4 +1,4 @@
-# Quickstart Commands (New PC)
+# Quickstart Commands
 
 Run these from project root: `D:\swipe-to-export`
 
