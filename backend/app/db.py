@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -6,7 +7,7 @@ import psycopg2
 from dotenv import load_dotenv
 from psycopg2.extras import Json
 
-load_dotenv()
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 

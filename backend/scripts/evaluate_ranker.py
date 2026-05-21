@@ -318,6 +318,12 @@ def main():
     parser.add_argument("--gpu", action="store_true", help="Prefer GPU.")
     parser.add_argument("--cpu", action="store_true", help="Force CPU.")
     parser.add_argument("--out-json", default=None, help="Optional JSON output path for metrics.")
+    parser.add_argument(
+        "--history-jsonl",
+        default="data/metrics/metrics_history.jsonl",
+        help="JSONL output path to append metric history records.",
+    )
+    parser.add_argument("--no-db-metrics", action="store_true", help="Disable DB persistence for metrics.")
     args = parser.parse_args()
 
     if args.gpu and args.cpu:
@@ -330,8 +336,10 @@ def main():
     sys.path.insert(0, root)
     swipes_path = _resolve_path(root, args.swipes_csv)
     crossed_path = _resolve_path(root, args.crossed_csv)
+    history_path = _resolve_path(root, args.history_jsonl)
 
     from app.ml import HybridRanker
+    from app.metrics_store import save_pipeline_metrics
     from app.pipeline import engineer_buyer_features, engineer_exporter_features, load_data_clean
 
     swipes = _load_swipes(swipes_path)
@@ -480,14 +488,16 @@ def main():
 
     print(json.dumps(metrics, indent=2))
 
-    if args.out_json:
-        out_path = _resolve_path(root, args.out_json)
-        out_dir = os.path.dirname(out_path)
-        if out_dir:
-            os.makedirs(out_dir, exist_ok=True)
-        with open(out_path, "w", encoding="utf-8") as f:
-            json.dump(metrics, f, indent=2, ensure_ascii=True)
-        print(f"\nSaved metrics to: {out_path}")
+    latest_out = _resolve_path(root, args.out_json) if args.out_json else _resolve_path(root, "data/metrics/latest_metrics.json")
+
+    saved = save_pipeline_metrics(
+        metrics,
+        run_name="evaluate_ranker",
+        latest_path=latest_out,
+        history_path=history_path,
+        persist_db=(not args.no_db_metrics),
+    )
+    print(f"\nSaved metric artifacts: {saved}")
 
 
 if __name__ == "__main__":

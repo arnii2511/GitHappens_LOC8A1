@@ -36,6 +36,3 @@ We are building a data-driven matchmaking engine that:
 - Trust Score model  
 - Explainability logic  
 
----
-
-Built for hackathon prototype development.

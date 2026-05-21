@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { FeedResponse, MatchCardDTO } from '@/lib/types';
+import { mockMatchCards } from '@/lib/mock-data';
 
 const ML_API_BASE_URL =
   process.env.ML_API_BASE_URL ||
@@ -233,6 +234,30 @@ function mapBuyerRowAsCard(
   };
 }
 
+function mockFeedResponse(
+  limit: number,
+  offset: number,
+  minMatchScore: number,
+  minTrustScore: number,
+  role: string,
+  warning: string
+) {
+  const filtered = mockMatchCards.filter(
+    (card) => card.matchScore >= minMatchScore && card.trustScore >= minTrustScore
+  );
+  const paged = filtered.slice(offset, offset + limit).map((card) => ({
+    ...card,
+    backendWarning: warning,
+  }));
+
+  const response: FeedResponse = {
+    cards: paged,
+    total: filtered.length,
+    hasMore: offset + limit < filtered.length,
+  };
+  return NextResponse.json({ ...response, role, fallback: true, warning });
+}
+
 async function resolveBuyerId(explicitBuyerId: string): Promise<string> {
   const fromQuery = explicitBuyerId.trim();
   if (fromQuery) return fromQuery;
@@ -296,12 +321,13 @@ export async function GET(request: NextRequest) {
 
       if (!backendRes.ok) {
         const details = await backendRes.text();
-        return NextResponse.json(
-          {
-            error: 'Failed to fetch feed from ML backend.',
-            details: details || backendRes.statusText,
-          },
-          { status: 502 }
+        return mockFeedResponse(
+          limit,
+          offset,
+          minMatchScore,
+          minTrustScore,
+          role,
+          `Using local demo matches because the ML feed request failed: ${details || backendRes.statusText}`
         );
       }
 
@@ -328,12 +354,13 @@ export async function GET(request: NextRequest) {
     );
     if (!buyersRes.ok) {
       const details = await buyersRes.text();
-      return NextResponse.json(
-        {
-          error: 'Failed to fetch buyer list from ML backend.',
-          details: details || buyersRes.statusText,
-        },
-        { status: 502 }
+      return mockFeedResponse(
+        limit,
+        offset,
+        minMatchScore,
+        minTrustScore,
+        role,
+        `Using local demo matches because the ML buyer list request failed: ${details || buyersRes.statusText}`
       );
     }
 
@@ -353,6 +380,13 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ ...response, role });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unexpected server error.';
-    return NextResponse.json({ error: message }, { status: 500 });
+    return mockFeedResponse(
+      limit,
+      offset,
+      minMatchScore,
+      minTrustScore,
+      role,
+      `Using local demo matches because the ML backend is unavailable: ${message}`
+    );
   }
 }

@@ -7,25 +7,33 @@ from .common import F, TORCH_AVAILABLE, as_text, nn, torch
 from .time_decay import compute_time_decay_weights
 
 
-class _NCFNet(nn.Module):
-    def __init__(self, n_buyers: int, n_exporters: int, emb_dim: int, hidden_dim: int):
-        super().__init__()
-        self.buyer_emb = nn.Embedding(n_buyers, emb_dim)
-        self.exporter_emb = nn.Embedding(n_exporters, emb_dim)
-        self.mlp = nn.Sequential(
-            nn.Linear(emb_dim * 2, hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
-            nn.Linear(hidden_dim // 2, 1),
-        )
+if TORCH_AVAILABLE and nn is not None and torch is not None:
 
-    def forward(self, buyer_idx, exporter_idx):
-        b = self.buyer_emb(buyer_idx)
-        e = self.exporter_emb(exporter_idx)
-        x = torch.cat([b, e], dim=1)
-        return self.mlp(x).squeeze(1)
+    class _NCFNet(nn.Module):
+        def __init__(self, n_buyers: int, n_exporters: int, emb_dim: int, hidden_dim: int):
+            super().__init__()
+            self.buyer_emb = nn.Embedding(n_buyers, emb_dim)
+            self.exporter_emb = nn.Embedding(n_exporters, emb_dim)
+            self.mlp = nn.Sequential(
+                nn.Linear(emb_dim * 2, hidden_dim),
+                nn.ReLU(),
+                nn.Dropout(0.1),
+                nn.Linear(hidden_dim, hidden_dim // 2),
+                nn.ReLU(),
+                nn.Linear(hidden_dim // 2, 1),
+            )
+
+        def forward(self, buyer_idx, exporter_idx):
+            b = self.buyer_emb(buyer_idx)
+            e = self.exporter_emb(exporter_idx)
+            x = torch.cat([b, e], dim=1)
+            return self.mlp(x).squeeze(1)
+
+else:
+
+    class _NCFNet:
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError("PyTorch is not available for NCF.")
 
 
 class NeuralCollaborativeFilteringModel:
